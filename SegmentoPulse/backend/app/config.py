@@ -1,0 +1,55 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from typing import List, Union
+
+class Settings(BaseSettings):
+    """Application settings"""
+    
+    # Environment
+    ENVIRONMENT: str = "development"
+    
+    # Server
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+    
+    # CORS
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "https://segmento.in"]
+    
+    # News API
+    NEWS_API_KEY: str = ""
+    
+    # Multi-Provider News APIs
+    GNEWS_API_KEY: str = ""
+    NEWSAPI_API_KEY: str = ""
+    NEWSDATA_API_KEY: str = ""
+    
+    # Provider priority (will try in order until successful)
+    NEWS_PROVIDER_PRIORITY: List[str] = ["gnews", "newsapi", "newsdata", "google_rss"]
+    
+    # Firebase
+    FIREBASE_DATABASE_URL: str = ""
+    FIREBASE_PROJECT_ID: str = ""
+    FIREBASE_CREDENTIALS_PATH: str = "./firebase-credentials.json"
+    
+    # Redis
+    REDIS_URL: str = "redis://localhost:6379"
+    REDIS_PASSWORD: str = ""
+    
+    # Cache
+    CACHE_TTL: int = 120  # seconds
+    
+    @field_validator('CORS_ORIGINS', 'NEWS_PROVIDER_PRIORITY', mode='before')
+    @classmethod
+    def parse_comma_separated(cls, v: Union[str, List[str]]) -> List[str]:
+        """Parse comma-separated string into list (for HF Spaces secrets)"""
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(',') if item.strip()]
+        return v
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True
+    )
+
+settings = Settings()
