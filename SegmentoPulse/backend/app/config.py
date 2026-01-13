@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     # Cache
     CACHE_TTL: int = 120  # seconds
     
+    # Brevo Email Configuration
+    BREVO_API_KEY: str = ""
+    BREVO_SENDER_EMAIL: str = "info@segmento.in"
+    BREVO_SENDER_NAME: str = "SegmentoPulse"
+    
+    # Frontend URL (for unsubscribe links)
+    FRONTEND_URL: str = "https://segmento.in"
+    
     @field_validator('CORS_ORIGINS', 'NEWS_PROVIDER_PRIORITY', mode='before')
     @classmethod
     def parse_comma_separated(cls, v: Union[str, List[str]]) -> List[str]:
