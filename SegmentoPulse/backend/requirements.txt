@@ -25,3 +25,6 @@ python-dateutil==2.8.2
 # CORS & Security
 python-multipart==0.0.6
 email-validator==2.1.0
+
+# Brevo (Sendinblue) Email Service
+sib-api-v3-sdk==7.6.0
