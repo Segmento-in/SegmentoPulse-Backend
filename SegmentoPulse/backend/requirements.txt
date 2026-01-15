@@ -12,9 +12,9 @@ beautifulsoup4==4.12.3
 # HTTP client (replaces aiohttp)
 httpx==0.26.0
 
-# Caching (optional - can work without Redis)
-# redis==5.0.1
-# hiredis==2.3.2
+# Caching (Phase 1 optimization - enabled)
+redis==5.0.1
+hiredis==2.3.2
 
 # Firebase
 firebase-admin==6.4.0

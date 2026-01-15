@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str = ""
     
     # Cache
-    CACHE_TTL: int = 120  # seconds
+    CACHE_TTL: int = 600  # seconds (10 minutes) - Phase 1 optimization
     
     # Brevo Email Configuration
     BREVO_API_KEY: str = ""

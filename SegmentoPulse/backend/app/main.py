@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import news, search, analytics, subscription
+from app.routes import news, search, analytics, subscription, admin
 
 app = FastAPI(
     title="Segmento Pulse API",
@@ -25,6 +25,7 @@ app.include_router(news.router, prefix="/api/news", tags=["News"])
 app.include_router(search.router, prefix="/api/search", tags=["Search"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(subscription.router, tags=["Subscription"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 
 @app.get("/")
 async def root():
