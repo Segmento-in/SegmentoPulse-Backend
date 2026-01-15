@@ -25,14 +25,24 @@ class FirebaseService:
             return
         
         try:
+            # Check if credentials file exists before attempting initialization
+            import os
+            creds_path = settings.FIREBASE_CREDENTIALS_PATH if hasattr(settings, 'FIREBASE_CREDENTIALS_PATH') else './firebase-credentials.json'
+            
+            if not os.path.exists(creds_path):
+                print(f"Firebase credentials file not found at '{creds_path}' - Firebase features disabled")
+                self.initialized = False
+                return
+            
             if not firebase_admin._apps:
-                cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH if hasattr(settings, 'FIREBASE_CREDENTIALS_PATH') else './firebase-credentials.json')
+                cred = credentials.Certificate(creds_path)
                 firebase_admin.initialize_app(cred, {
                     'databaseURL': settings.FIREBASE_DATABASE_URL if hasattr(settings, 'FIREBASE_DATABASE_URL') else ''
                 })
             
             self.db_ref = db.reference('pulse/article_views')
             self.initialized = True
+            print("Firebase initialized successfully")
         except Exception as e:
             print(f"Firebase initialization error: {e}")
             self.initialized = False
@@ -196,4 +206,15 @@ class FirebaseService:
         except Exception as e:
             print(f"Error getting all subscribers: {e}")
             return []
+
+
+# Singleton instance
+_firebase_service = None
+
+def get_firebase_service() -> FirebaseService:
+    """Get or create Firebase service singleton instance"""
+    global _firebase_service
+    if _firebase_service is None:
+        _firebase_service = FirebaseService()
+    return _firebase_service
 
