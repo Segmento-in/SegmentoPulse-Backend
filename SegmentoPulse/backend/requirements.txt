@@ -30,7 +30,11 @@ email-validator==2.1.0
 sib-api-v3-sdk==7.6.0
 
 # Appwrite Database (Phase 2)
+<<<<<<< HEAD
 appwrite==4.1.0
 
 # Background Workers (Phase 3)
 apscheduler==3.10.4
+=======
+appwrite==14.1.0
+>>>>>>> 1f2da0dbeda5d9a8ae8b35f1d0c7544d4279ac34
