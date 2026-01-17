@@ -153,3 +153,143 @@ async def clear_cache():
         "message": f"Cleared {cleared} cached categories",
         "categories_cleared": cleared
     }
+
+
+# ===========================================
+# Database Management Endpoints (Phase 2)
+# ===========================================
+
+@router.get("/db/stats")
+async def get_database_stats():
+    """
+    Get Appwrite database statistics (Phase 2)
+    
+    Returns:
+        - Total article count
+        - Articles per category  
+        - Database connection status
+        - Collection information
+    """
+    from app.services.appwrite_db import get_appwrite_db
+    
+    try:
+        appwrite_db = get_appwrite_db()
+        stats = await appwrite_db.get_stats()
+        
+        return {
+            "success": True,
+            **stats
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/db/cleanup")
+async def cleanup_old_articles(days: int = 30):
+    """
+    Delete articles older than specified days from Appwrite database
+    
+    Args:
+        days: Delete articles older than this many days (default: 30)
+    
+    Returns:
+        Number of articles deleted
+    """
+    from app.services.appwrite_db import get_appwrite_db
+    
+    try:
+        appwrite_db = get_appwrite_db()
+        deleted_count = await appwrite_db.delete_old_articles(days)
+        
+        return {
+            "success": True,
+            "message": f"Deleted {deleted_count} articles older than {days} days",
+            "deleted_count": deleted_count,
+            "days_threshold": days
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/db/populate")
+async def populate_database():
+    """
+    Populate Appwrite database by fetching fresh articles for all categories
+    
+    This is useful for:
+    - Initial database setup
+    - Refreshing all categories at once
+    - Recovery after database cleanup
+    """
+    from app.services.appwrite_db import get_appwrite_db
+    from app.services.news_aggregator import NewsAggregator
+    import asyncio
+    
+    try:
+        appwrite_db = get_appwrite_db()
+        news_aggregator = NewsAggregator()
+        
+        results = {
+            "successful": [],
+            "failed": []
+        }
+        
+        for category in CATEGORIES:
+            try:
+                print(f"[DB Populate] Fetching {category}...")
+                
+                # Fetch articles from external APIs
+                articles = await news_aggregator.fetch_by_category(category)
+                
+                if articles:
+                    # Save to Appwrite database
+                    saved_count = await appwrite_db.save_articles(articles)
+                    
+                    results["successful"].append({
+                        "category": category,
+                        "fetched": len(articles),
+                        "saved": saved_count
+                    })
+                    print(f"✓ [DB Populate] {category}: {saved_count} articles saved")
+                else:
+                    results["failed"].append({
+                        "category": category,
+                        "error": "No articles returned from providers"
+                    })
+                    print(f"✗ [DB Populate] {category}: No articles available")
+                
+                # Rate limiting: Wait 1 second between API calls
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                results["failed"].append({
+                    "category": category,
+                    "error": str(e)
+                })
+                print(f"✗ [DB Populate] {category}: Error - {e}")
+        
+        categories_populated = len(results["successful"])
+        categories_failed = len(results["failed"])
+        total_saved = sum(r["saved"] for r in results["successful"])
+        
+        return {
+            "success": True,
+            "message": f"Database populated: {categories_populated} categories, {total_saved} articles saved",
+            "categories_populated": categories_populated,
+            "categories_failed": categories_failed,
+            "total_categories": len(CATEGORIES),
+            "total_articles_saved": total_saved,
+            "details": results
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }

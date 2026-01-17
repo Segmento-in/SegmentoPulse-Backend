@@ -45,6 +45,7 @@ class NewsResponse(BaseModel):
     count: int
     articles: List[Article]
     cached: bool = False
+    source: Optional[str] = None  # "redis", "appwrite", or "api"
 
 class SearchResponse(BaseModel):
     """Response model for search endpoints"""

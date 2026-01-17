@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # Frontend URL (for unsubscribe links)
     FRONTEND_URL: str = "https://segmento.in"
     
+    # Appwrite Database (Phase 2)
+    APPWRITE_ENDPOINT: str = "https://cloud.appwrite.io/v1"
+    APPWRITE_PROJECT_ID: str = ""
+    APPWRITE_API_KEY: str = ""
+    APPWRITE_DATABASE_ID: str = "segmento_db"
+    APPWRITE_COLLECTION_ID: str = "articles"
+    
     @field_validator('CORS_ORIGINS', 'NEWS_PROVIDER_PRIORITY', mode='before')
     @classmethod
     def parse_comma_separated(cls, v: Union[str, List[str]]) -> List[str]:
