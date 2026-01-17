@@ -3,6 +3,12 @@ Appwrite Database Service - Phase 2
 Provides persistent storage for news articles with fast querying capability.
 """
 
+# Suppress Appwrite SDK v4.1.0 deprecation warnings
+# NOTE: list_documents() is deprecated but new API (tablesDB.list_rows) requires SDK v6+
+# We're using v4.1.0 for stability, suppress warnings until we upgrade
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='appwrite')
+
 try:
     from appwrite.client import Client
     from appwrite.services.databases import Databases
