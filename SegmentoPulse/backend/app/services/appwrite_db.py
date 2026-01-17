@@ -88,7 +88,7 @@ class AppwriteDatabase:
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[
-                    Query.equal('category', category),
+                    Query.equal('category', [category]),  # SDK v5+ requires array format
                     Query.order_desc('published_at'),
                     Query.limit(limit)
                 ]
@@ -268,7 +268,7 @@ class AppwriteDatabase:
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=settings.APPWRITE_COLLECTION_ID,
                     queries=[
-                        Query.equal('category', category),
+                        Query.equal('category', [category]),  # SDK v5+ requires array format
                         Query.limit(1)
                     ]
                 )
