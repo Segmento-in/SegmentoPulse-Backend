@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_PASSWORD: str = ""
     
+    # Redis Control (Hotfix: Soft-disable when Redis not available)
+    ENABLE_REDIS: bool = False  # Set to True when Redis server is running
+    
     # Cache
     CACHE_TTL: int = 600  # seconds (10 minutes) - Phase 1 optimization
     
