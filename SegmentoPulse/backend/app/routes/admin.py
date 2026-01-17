@@ -293,3 +293,97 @@ async def populate_database():
             "success": False,
             "error": str(e)
         }
+
+
+# ===========================================
+# Background Scheduler Management (Phase 3)
+# ===========================================
+
+@router.post("/scheduler/fetch-now")
+async def trigger_fetch_job():
+    """
+    Manually trigger the news fetch job (Phase 3)
+    
+    Useful for:
+    - Testing the fetcher without waiting 15 minutes
+    - Forcing an immediate database refresh
+    - Verifying background worker functionality
+    """
+    from app.services.scheduler import trigger_fetch_now
+    
+    try:
+        await trigger_fetch_now()
+        
+        return {
+            "success": True,
+            "message": "News fetch job triggered successfully",
+            "note": "Check server logs for detailed progress"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/scheduler/cleanup-now")
+async def trigger_cleanup_job():
+    """
+    Manually trigger the cleanup job (Phase 3)
+    
+    Deletes articles older than 48 hours.
+    
+    Useful for:
+    - Testing the janitor without waiting 24 hours
+    - Immediate cleanup of old data
+    - Free tier space management
+    """
+    from app.services.scheduler import trigger_cleanup_now
+    
+    try:
+        await trigger_cleanup_now()
+        
+        return {
+            "success": True,
+            "message": "Cleanup job triggered successfully",
+            "note": "Check server logs for deletion count"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/scheduler/status")
+async def get_scheduler_status():
+    """
+    Get background scheduler status and job information
+    
+    Returns:
+        - Scheduler state (running/stopped)
+        - List of registered jobs with next run times
+    """
+    from app.services.scheduler import scheduler
+    
+    try:
+        jobs_info = []
+        for job in scheduler.get_jobs():
+            jobs_info.append({
+                "id": job.id,
+                "name": job.name,
+                "next_run_time": str(job.next_run_time) if job.next_run_time else None,
+                "trigger": str(job.trigger)
+            })
+        
+        return {
+            "success": True,
+            "scheduler_running": scheduler.running,
+            "total_jobs": len(jobs_info),
+            "jobs": jobs_info
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
