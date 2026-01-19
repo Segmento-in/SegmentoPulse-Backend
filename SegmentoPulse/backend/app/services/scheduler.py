@@ -217,18 +217,19 @@ def start_scheduler():
     logger.info("   ⏱️  Schedule: Every 15 minutes")
     logger.info("   📋 Task: Fetch news from all providers and update database")
     
-    # Job 2: Cleanup old news daily at midnight (00:00)
+    # Job 2: Cleanup old news every 6 hours
     scheduler.add_job(
         cleanup_old_news,
-        trigger=CronTrigger(hour=0, minute=0),  # Daily at 00:00 UTC
+        trigger=CronTrigger(hour='0,6,12,18', minute=0),  # Every 6 hours at :00
         id='cleanup_old_news',
-        name='Database Janitor (daily at midnight)',
+        name='Database Janitor (every 6 hours)',
         replace_existing=True
     )
     logger.info("")
     logger.info("✅ Job #2 Registered: 🧹 Database Janitor")
-    logger.info("   ⏱️  Schedule: Daily at 00:00 UTC")
-    logger.info("   📋 Task: Delete articles older than 48 hours")
+    logger.info("   ⏱️  Schedule: Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)")
+    logger.info("   📋 Task: Delete articles older than 48 hours (500 per run)")
+    logger.info("   🔢 Total cleanup capacity: 2,000 articles/day")
     
     # Start the scheduler
     logger.info("")
