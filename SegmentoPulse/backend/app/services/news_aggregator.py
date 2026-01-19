@@ -73,17 +73,17 @@ class NewsAggregator:
             
             # Skip if provider is not available (rate limited)
             if not provider.is_available():
-                print(f"Provider {provider_name} is not available (rate limited), trying next...")
+                print(f"⏭️  [{provider_name.upper()}] Not available (rate limited), trying next...")
                 self.stats['failover_count'] += 1
                 continue
             
             try:
-                print(f"Fetching news for '{category}' from {provider_name}...")
+                print(f"📡 [{provider_name.upper()}] Attempting to fetch '{category}' news...")
                 articles = await provider.fetch_news(category, limit=20)
                 
                 # If we got articles, return them
                 if articles:
-                    print(f"✓ Successfully fetched {len(articles)} articles from {provider_name}")
+                    # No need to print here, provider already printed success
                     
                     # Track usage statistics
                     if provider_name not in self.stats['provider_usage']:
@@ -92,15 +92,15 @@ class NewsAggregator:
                     
                     return articles
                 else:
-                    print(f"Provider {provider_name} returned no articles, trying next...")
+                    print(f"⏭️  [{provider_name.upper()}] No articles returned, trying next provider...")
                     
             except Exception as e:
-                print(f"Error with provider {provider_name}: {e}, trying next...")
+                print(f"❌ [{provider_name.upper()}] Error: {e}, trying next...")
                 self.stats['failover_count'] += 1
                 continue
         
         # If all providers failed, return empty list
-        print(f"⚠ All providers exhausted for category '{category}'")
+        print(f"😞 [NEWS AGGREGATOR] All providers exhausted for '{category}' - no articles available")
         return []
     
     async def fetch_rss(self, provider: str) -> List[Article]:

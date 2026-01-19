@@ -44,7 +44,10 @@ async def fetch_all_news():
     Runs every 15 minutes to keep database fresh with latest articles.
     This ensures users always get fast responses from L2 cache (Appwrite).
     """
-    logger.info("🔄 [Background Fetcher] Starting news fetch for all categories...")
+    logger.info("═" * 80)
+    logger.info("📰 [NEWS FETCHER] Starting news fetch for all categories...")
+    logger.info("🕐 Fetch Time: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("═" * 80)
     
     news_aggregator = NewsAggregator()
     appwrite_db = get_appwrite_db()
@@ -55,13 +58,16 @@ async def fetch_all_news():
     
     for category in CATEGORIES:
         try:
-            logger.info(f"  Fetching {category}...")
+            logger.info("")
+            logger.info("📌 Category: %s", category.upper())
+            logger.info("⏳ Fetching from news providers...")
             
             # Fetch from external APIs
             articles = await news_aggregator.fetch_by_category(category)
             
             if articles:
                 # Save to Appwrite database (L2)
+                logger.info("💾 Saving to Appwrite database...")
                 saved_count = await appwrite_db.save_articles(articles)
                 total_fetched += len(articles)
                 total_saved += saved_count
@@ -69,18 +75,26 @@ async def fetch_all_news():
                 # Update Redis cache (L1) if available
                 try:
                     await cache_service.set(f"news:{category}", articles, ttl=settings.CACHE_TTL)
+                    logger.info("⚡ Redis cache updated")
                 except Exception as e:
-                    logger.debug(f"  Redis cache update skipped for {category}: {e}")
+                    logger.debug("⚠️  Redis cache unavailable (not critical): %s", e)
                 
-                logger.info(f"  ✓ {category}: {len(articles)} fetched, {saved_count} saved")
+                logger.info("✅ SUCCESS: %d articles fetched, %d new articles saved", len(articles), saved_count)
             else:
-                logger.warning(f"  ✗ {category}: No articles available")
+                logger.warning("⚠️  WARNING: No articles available from any provider")
             
         except Exception as e:
-            logger.error(f"  ✗ {category}: Error - {e}")
+            logger.error("❌ ERROR in %s: %s", category, str(e))
+            logger.exception("Full traceback:")
             continue
     
-    logger.info(f"✅ [Background Fetcher] Complete! {total_fetched} articles fetched, {total_saved} new articles saved")
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("🎉 [NEWS FETCHER] COMPLETED!")
+    logger.info("📊 Total fetched: %d articles", total_fetched)
+    logger.info("💾 Total saved: %d new articles", total_saved)
+    logger.info("🕐 Completion time: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("═" * 80)
 
 
 async def cleanup_old_news():
@@ -90,12 +104,18 @@ async def cleanup_old_news():
     Runs daily at midnight to keep Appwrite database within free tier limits.
     Only keeps the last 2 days of articles.
     """
-    logger.info("🧹 [Janitor] Starting cleanup of old news articles...")
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("🧹 [CLEANUP JANITOR] Starting cleanup of old news articles...")
+    logger.info("🕐 Cleanup Time: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("═" * 80)
     
     appwrite_db = get_appwrite_db()
     
     if not appwrite_db.initialized:
-        logger.warning("  Appwrite not initialized - skipping cleanup")
+        logger.error("❌ CRITICAL: Appwrite database not initialized!")
+        logger.error("⚠️  Cleanup cannot proceed - database connection required")
+        logger.error("💡 Check Appwrite credentials in environment variables")
         return
     
     try:
@@ -104,10 +124,12 @@ async def cleanup_old_news():
         cutoff_date = datetime.now() - timedelta(hours=retention_hours)
         cutoff_iso = cutoff_date.isoformat()
         
-        logger.info(f"  Retention policy: {retention_hours} hours")
-        logger.info(f"  Cutoff date: {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("📋 Retention Policy: %d hours", retention_hours)
+        logger.info("📅 Cutoff Date: %s", cutoff_date.strftime('%Y-%m-%d %H:%M:%S'))
+        logger.info("🗑️  Articles published before this will be deleted...")
         
         # Query and delete old articles
+        logger.info("🔍 Querying Appwrite for old articles...")
         from appwrite.query import Query
         
         response = appwrite_db.databases.list_documents(
@@ -119,7 +141,12 @@ async def cleanup_old_news():
             ]
         )
         
+        logger.info("📊 Found %d old articles to delete", len(response['documents']))
+        
         deleted_count = 0
+        if len(response['documents']) > 0:
+            logger.info("🗑️  Deleting articles...")
+        
         for doc in response['documents']:
             try:
                 appwrite_db.databases.delete_document(
@@ -128,32 +155,55 @@ async def cleanup_old_news():
                     document_id=doc['$id']
                 )
                 deleted_count += 1
+                if deleted_count % 10 == 0:
+                    logger.info("   Progress: %d articles deleted...", deleted_count)
             except Exception as e:
-                logger.error(f"  Error deleting document {doc['$id']}: {e}")
+                logger.error("❌ Error deleting document %s: %s", doc['$id'], e)
         
         # Clear Redis cache to force refresh from updated database
+        logger.info("🔄 Clearing Redis cache...")
         cache_service = CacheService()
+        cache_cleared = 0
         for category in CATEGORIES:
             try:
                 await cache_service.delete(f"news:{category}")
+                cache_cleared += 1
             except Exception as e:
-                logger.debug(f"  Cache clear skipped for {category}: {e}")
+                logger.debug("⚠️  Cache clear skipped for %s: %s", category, e)
         
-        logger.info(f"✅ [Janitor] Complete! Deleted {deleted_count} articles older than {retention_hours} hours")
+        if cache_cleared > 0:
+            logger.info("✅ Cache cleared for %d categories", cache_cleared)
+        
+        logger.info("")
+        logger.info("═" * 80)
+        logger.info("🎉 [CLEANUP JANITOR] COMPLETED!")
+        logger.info("🗑️  Total Deleted: %d articles", deleted_count)
+        logger.info("⏰ Retention: Articles older than %d hours removed", retention_hours)
+        logger.info("🕐 Completion Time: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        logger.info("═" * 80)
         
         # If there are more old articles, schedule another cleanup soon
         if len(response['documents']) >= 100:
-            logger.info(f"  More old articles detected - will clean up again in next run")
+            logger.warning("⚠️  WARNING: More old articles detected (100+ limit reached)")
+            logger.warning("📅 Additional cleanup will run in next scheduled job")
         
     except Exception as e:
-        logger.error(f"✗ [Janitor] Cleanup failed: {e}")
+        logger.error("")
+        logger.error("═" * 80)
+        logger.error("❌ [CLEANUP JANITOR] FAILED!")
+        logger.error("Error: %s", str(e))
+        logger.error("═" * 80)
+        logger.exception("Full traceback:")
 
 
 def start_scheduler():
     """
     Initialize and start the background scheduler with all jobs
     """
-    logger.info("⏰ Starting background scheduler...")
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("⏰ [SCHEDULER] Initializing background scheduler...")
+    logger.info("═" * 80)
     
     # Job 1: Fetch news every 15 minutes
     scheduler.add_job(
@@ -163,7 +213,9 @@ def start_scheduler():
         name='News Fetcher (every 15 min)',
         replace_existing=True
     )
-    logger.info("  ✓ Registered: News Fetcher (every 15 minutes)")
+    logger.info("✅ Job #1 Registered: 📰 News Fetcher")
+    logger.info("   ⏱️  Schedule: Every 15 minutes")
+    logger.info("   📋 Task: Fetch news from all providers and update database")
     
     # Job 2: Cleanup old news daily at midnight (00:00)
     scheduler.add_job(
@@ -173,30 +225,51 @@ def start_scheduler():
         name='Database Janitor (daily at midnight)',
         replace_existing=True
     )
-    logger.info("  ✓ Registered: Database Janitor (daily at 00:00 UTC)")
+    logger.info("")
+    logger.info("✅ Job #2 Registered: 🧹 Database Janitor")
+    logger.info("   ⏱️  Schedule: Daily at 00:00 UTC")
+    logger.info("   📋 Task: Delete articles older than 48 hours")
     
     # Start the scheduler
+    logger.info("")
+    logger.info("🚀 Starting scheduler engine...")
     scheduler.start()
-    logger.info("✅ Background scheduler started successfully!")
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("✅ [SCHEDULER] Background scheduler started successfully!")
+    logger.info("🔄 All jobs are now active and running")
+    logger.info("═" * 80)
+    logger.info("")
 
 
 def shutdown_scheduler():
     """
     Gracefully shutdown the scheduler
     """
-    logger.info("⏹️  Shutting down background scheduler...")
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("⏹️  [SCHEDULER] Shutting down background scheduler...")
+    logger.info("⏳ Waiting for running jobs to complete...")
     scheduler.shutdown(wait=True)
-    logger.info("✅ Background scheduler shut down successfully")
+    logger.info("✅ [SCHEDULER] Background scheduler shut down successfully")
+    logger.info("═" * 80)
+    logger.info("")
 
 
 # Manual job triggers for testing (can be called from admin endpoints)
 async def trigger_fetch_now():
     """Manually trigger news fetch (for testing)"""
-    logger.info("🔧 [Manual Trigger] Running fetch job now...")
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("🔧 [MANUAL TRIGGER] Running fetch job NOW...")
+    logger.info("═" * 80)
     await fetch_all_news()
 
 
 async def trigger_cleanup_now():
     """Manually trigger cleanup (for testing)"""
-    logger.info("🔧 [Manual Trigger] Running cleanup job now...")
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("🔧 [MANUAL TRIGGER] Running cleanup job NOW...")
+    logger.info("═" * 80)
     await cleanup_old_news()

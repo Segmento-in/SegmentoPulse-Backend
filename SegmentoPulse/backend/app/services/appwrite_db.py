@@ -59,12 +59,22 @@ class AppwriteDatabase:
             self.databases = Databases(self.client)
             
             self.initialized = True
-            print(f"✓ Appwrite database initialized successfully")
-            print(f"  Database: {settings.APPWRITE_DATABASE_ID}")
-            print(f"  Collection: {settings.APPWRITE_COLLECTION_ID}")
+            print("")
+            print("✓" * 80)
+            print("✅ [Appwrite] Database initialized successfully!")
+            print(f"📊 Database ID: {settings.APPWRITE_DATABASE_ID}")
+            print(f"📋 Collection ID: {settings.APPWRITE_COLLECTION_ID}")
+            print("✓" * 80)
+            print("")
             
         except Exception as e:
-            print(f"✗ Appwrite initialization error: {e}")
+            print("")
+            print("✗" * 80)
+            print("❌ [Appwrite] Initialization FAILED!")
+            print(f"⚠️  Error: {e}")
+            print("💡 Please check your Appwrite credentials in .env file")
+            print("✗" * 80)
+            print("")
             self.initialized = False
     
     def _generate_url_hash(self, url: str) -> str:
@@ -189,9 +199,9 @@ class AppwriteDatabase:
                 continue
         
         if saved_count > 0:
-            print(f"✓ Saved {saved_count} new articles to Appwrite")
+            print(f"✅ [Appwrite] Saved {saved_count} new articles to database")
         if skipped_count > 0:
-            print(f"  Skipped {skipped_count} duplicate articles")
+            print (f"⏭️  [Appwrite] Skipped {skipped_count} duplicate articles")
         
         return saved_count
     
@@ -234,7 +244,9 @@ class AppwriteDatabase:
                     print(f"Error deleting document {doc['$id']}: {e}")
             
             if deleted_count > 0:
-                print(f"✓ Deleted {deleted_count} articles older than {days} days")
+                print(f"✅ [Appwrite] Deleted {deleted_count} articles older than {days} days")
+            else:
+                print(f"📋 [Appwrite] No old articles to delete")
             
             return deleted_count
             

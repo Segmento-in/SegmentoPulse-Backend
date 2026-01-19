@@ -62,7 +62,8 @@ class GNewsProvider(NewsProvider):
             'business-analytics': 'business analytics',
             'customer-data-platform': 'customer data platform CDP',
             'data-centers': 'data centers infrastructure',
-            'cloud-computing': 'cloud computing',
+            'cloud-computing': 'cloud computing AWS Azure Google Cloud Salesforce Alibaba Cloud Tencent Cloud Huawei Cloud Cloudflare',
+            'medium-article': 'Medium article blog writing publishing',
             'magazines': 'technology news',
         }
     
@@ -86,17 +87,25 @@ class GNewsProvider(NewsProvider):
                 response = await client.get(url, params=params)
                 
                 if response.status_code == 429:
+                    print("😢 [GNews] Rate limit hit! Switching to next provider...")
                     self.mark_rate_limited()
                     return []
                 
                 if response.status_code == 200:
                     self.request_count += 1
                     data = response.json()
-                    return self._parse_response(data, category)
+                    articles = self._parse_response(data, category)
+                    if articles:
+                        print(f"✅ [GNews] Fetched {len(articles)} articles successfully")
+                    else:
+                        print("⚠️  [GNews] No articles found in response")
+                    return articles
+                else:
+                    print(f"❌ [GNews] HTTP {response.status_code} error")
                 
                 return []
         except Exception as e:
-            print(f"GNews API error: {e}")
+            print(f"❌ [GNews] API error: {e}")
             return []
     
     def _parse_response(self, data: Dict, category: str) -> List[Article]:
@@ -115,7 +124,7 @@ class GNewsProvider(NewsProvider):
                 )
                 articles.append(article)
             except Exception as e:
-                print(f"Error parsing GNews article: {e}")
+                print(f"⚠️  [GNews] Error parsing article: {e}")
                 continue
         return articles
 
@@ -139,7 +148,8 @@ class NewsAPIProvider(NewsProvider):
             'business-analytics': '"business analytics" OR analytics',
             'customer-data-platform': '"customer data platform" OR CDP',
             'data-centers': '"data centers" OR "data centre"',
-            'cloud-computing': '"cloud computing" OR cloud',
+            'cloud-computing': '"cloud computing" OR AWS OR Azure OR "Google Cloud" OR Salesforce OR "Alibaba Cloud" OR "Tencent Cloud" OR "Huawei Cloud" OR Cloudflare',
+            'medium-article': 'Medium OR "Medium article" OR "Medium blog" OR "Medium publishing"',
             'magazines': 'technology',
         }
     
@@ -192,7 +202,7 @@ class NewsAPIProvider(NewsProvider):
                 )
                 articles.append(article)
             except Exception as e:
-                print(f"Error parsing NewsAPI article: {e}")
+                print(f"⚠️  [NewsAPI] Error parsing article: {e}")
                 continue
         return articles
 
@@ -216,7 +226,8 @@ class NewsDataProvider(NewsProvider):
             'business-analytics': 'business analytics',
             'customer-data-platform': 'customer data platform',
             'data-centers': 'data centers',
-            'cloud-computing': 'cloud computing',
+            'cloud-computing': 'cloud computing,AWS,Azure,Google Cloud,Salesforce,Alibaba Cloud,Tencent Cloud,Huawei Cloud,Cloudflare',
+            'medium-article': 'Medium,article,blog,writing,publishing',
             'magazines': 'technology',
         }
     
@@ -239,17 +250,25 @@ class NewsDataProvider(NewsProvider):
                 response = await client.get(url, params=params)
                 
                 if response.status_code == 429:
+                    print("😢 [NewsData] Rate limit hit! Switching to next provider...")
                     self.mark_rate_limited()
                     return []
                 
                 if response.status_code == 200:
                     self.request_count += 1
                     data = response.json()
-                    return self._parse_response(data, category, limit)
+                    articles = self._parse_response(data, category, limit)
+                    if articles:
+                        print(f"✅ [NewsData] Fetched {len(articles)} articles successfully")
+                    else:
+                        print("⚠️  [NewsData] No articles found in response")
+                    return articles
+                else:
+                    print(f"❌ [NewsData] HTTP {response.status_code} error")
                 
                 return []
         except Exception as e:
-            print(f"NewsData.io error: {e}")
+            print(f"❌ [NewsData] error: {e}")
             return []
     
     def _parse_response(self, data: Dict, category: str, limit: int) -> List[Article]:
@@ -268,7 +287,7 @@ class NewsDataProvider(NewsProvider):
                 )
                 articles.append(article)
             except Exception as e:
-                print(f"Error parsing NewsData article: {e}")
+                print(f"⚠️  [NewsData] Error parsing article: {e}")
                 continue
         return articles
 
@@ -291,7 +310,8 @@ class GoogleNewsRSSProvider(NewsProvider):
             'business-analytics': 'https://news.google.com/rss/search?q=business+analytics&hl=en-US&gl=US&ceid=US:en',
             'customer-data-platform': 'https://news.google.com/rss/search?q=customer+data+platform+OR+CDP&hl=en-US&gl=US&ceid=US:en',
             'data-centers': 'https://news.google.com/rss/search?q=data+centers+OR+data+centre&hl=en-US&gl=US&ceid=US:en',
-            'cloud-computing': 'https://news.google.com/rss/search?q=cloud+computing&hl=en-US&gl=US&ceid=US:en',
+            'cloud-computing': 'https://news.google.com/rss/search?q=cloud+computing+OR+AWS+OR+Azure+OR+Google+Cloud+OR+Salesforce+OR+Alibaba+Cloud+OR+Tencent+Cloud+OR+Huawei+Cloud+OR+Cloudflare&hl=en-US&gl=US&ceid=US:en',
+            'medium-article': 'https://news.google.com/rss/search?q=Medium+article+OR+Medium+blog+OR+Medium+publishing&hl=en-US&gl=US&ceid=US:en',
             'magazines': 'https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en',
         }
     
@@ -308,15 +328,23 @@ class GoogleNewsRSSProvider(NewsProvider):
                 response = await client.get(feed_url)
                 
                 if response.status_code == 429:
+                    print("😢 [Google RSS] Rate limit hit! Trying next provider...")
                     self.mark_rate_limited()
                     return []
                 
                 if response.status_code == 200:
                     self.request_count += 1
                     parser = RSSParser()
-                    return await parser.parse_google_news(response.text, category)
+                    articles = await parser.parse_google_news(response.text, category)
+                    if articles:
+                        print(f"✅ [Google RSS] Fetched {len(articles)} articles successfully")
+                    else:
+                        print("⚠️  [Google RSS] No articles found in feed")
+                    return articles
+                else:
+                    print(f"❌ [Google RSS] HTTP {response.status_code} error")
                 
                 return []
         except Exception as e:
-            print(f"Google News RSS error: {e}")
+            print(f"❌ [Google RSS] error: {e}")
             return []
