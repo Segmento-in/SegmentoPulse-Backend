@@ -137,7 +137,7 @@ async def cleanup_old_news():
             collection_id=settings.APPWRITE_COLLECTION_ID,
             queries=[
                 Query.less_than('published_at', cutoff_iso),
-                Query.limit(100)  # Delete in batches of 100
+                Query.limit(500)  # Increased from 100 to 500 for better cleanup throughput
             ]
         )
         

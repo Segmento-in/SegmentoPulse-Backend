@@ -227,7 +227,7 @@ class AppwriteDatabase:
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[
                     Query.less_than('fetched_at', cutoff_date),
-                    Query.limit(100)  # Delete in batches
+                    Query.limit(500)  # Increased from 100 to 500 for better throughput
                 ]
             )
             
