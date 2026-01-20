@@ -276,8 +276,9 @@ class AppwriteDatabase:
             # Get counts by category
             categories = [
                 "ai", "data-security", "data-governance", "data-privacy",
-                "data-engineering", "business-intelligence", "business-analytics",
-                "customer-data-platform", "data-centers", "cloud-computing", "magazines"
+                "data-engineering", "data-management", "business-intelligence", 
+                "business-analytics", "customer-data-platform", "data-centers", 
+                "cloud-computing", "magazines"
             ]
             
             articles_by_category = {}

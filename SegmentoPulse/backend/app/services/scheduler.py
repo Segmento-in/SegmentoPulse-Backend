@@ -28,6 +28,7 @@ CATEGORIES = [
     "data-governance",
     "data-privacy",
     "data-engineering",
+    "data-management",
     "business-intelligence",
     "business-analytics",
     "customer-data-platform",
