@@ -14,10 +14,15 @@ async def get_news_by_category(category: str):
     """
     Get news articles by category with multi-layer caching (Phase 2)
     
+    **THE GOLDEN RULE: Users NEVER wait for external APIs**
+    - Users only read from database (Appwrite)
+    - Background workers populate the database every 15 minutes
+    - If database is empty, return empty state (workers will fill it soon)
+    
     Caching Strategy:
     - L1 Cache: Redis (if available) - 600s TTL, ~5ms response
     - L2 Cache: Appwrite Database - persistent, 10-50ms response  
-    - L3 Fallback: External APIs (GNews/NewsAPI/etc) - 3-7s response
+    - NO L3: External APIs are ONLY called by background workers
     
     Categories:
     - ai: Artificial Intelligence
@@ -25,6 +30,7 @@ async def get_news_by_category(category: str):
     - data-governance: Data Governance
     - data-privacy: Data Privacy
     - data-engineering: Data Engineering
+    - data-management: Data Management
     - business-intelligence: Business Intelligence
     - business-analytics: Business Analytics
     - customer-data-platform: Customer Data Platform
@@ -33,7 +39,7 @@ async def get_news_by_category(category: str):
     - magazines: Tech Magazines
     """
     try:
-        # L1: Check Redis cache (fastest path)
+        # L1: Check Redis cache (fastest path - ~5ms)
         cached_data = await cache_service.get(f"news:{category}")
         if cached_data:
             return NewsResponse(
@@ -45,8 +51,9 @@ async def get_news_by_category(category: str):
                 source="redis"
             )
         
-        # L2: Check Appwrite database (fast persistent storage)
+        # L2: Check Appwrite database (fast persistent storage - ~50ms)
         db_articles = await appwrite_db.get_articles(category, limit=20)
+        
         if db_articles:
             # Cache the database results in Redis for next request
             await cache_service.set(f"news:{category}", db_articles)
@@ -60,24 +67,19 @@ async def get_news_by_category(category: str):
                 source="appwrite"
             )
         
-        # L3: Fetch from external APIs (slowest path, only when database is empty)
-        articles = await news_aggregator.fetch_by_category(category)
-        
-        # Save to Appwrite database for future requests (populate L2)
-        if articles:
-            await appwrite_db.save_articles(articles)
-        
-        # Cache in Redis (populate L1)
-        await cache_service.set(f"news:{category}", articles)
-        
+        # Database is empty - return empty state
+        # Background workers will populate the database every 15 minutes
+        # User should check back soon or wait for automatic refresh
         return NewsResponse(
             success=True,
             category=category,
-            count=len(articles),
-            articles=articles,
+            count=0,
+            articles=[],
             cached=False,
-            source="api"
+            source="empty",
+            message="News data is being fetched by background workers. Please check back in a few minutes."
         )
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

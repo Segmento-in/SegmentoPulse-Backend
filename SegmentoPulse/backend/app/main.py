@@ -74,8 +74,37 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+    """
+    Enhanced health check endpoint with scheduler status
+    Used by external monitoring services (UptimeRobot, Cron-Job.org) to keep app awake
+    """
+    from datetime import datetime
+    from app.services.scheduler import scheduler
+    
+    # Get scheduler status
+    scheduler_running = scheduler.running if scheduler else False
+    job_count = len(scheduler.get_jobs()) if scheduler and scheduler.running else 0
+    
+    jobs_info = []
+    if scheduler and scheduler.running:
+        for job in scheduler.get_jobs():
+            jobs_info.append({
+                "id": job.id,
+                "name": job.name,
+                "next_run": job.next_run_time.isoformat() if job.next_run_time else None
+            })
+    
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "uptime": "operational",
+        "scheduler": {
+            "running": scheduler_running,
+            "job_count": job_count,
+            "jobs": jobs_info
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn
