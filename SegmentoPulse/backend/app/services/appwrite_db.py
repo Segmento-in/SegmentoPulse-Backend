@@ -84,13 +84,14 @@ class AppwriteDatabase:
         """
         return hashlib.sha256(url.encode()).hexdigest()[:16]
     
-    async def get_articles(self, category: str, limit: int = 20) -> List[Dict]:
+    async def get_articles(self, category: str, limit: int = 20, offset: int = 0) -> List[Dict]:
         """
-        Get articles by category from Appwrite database (L2 cache)
+        Get articles by category from Appwrite database (L2 cache) with pagination
         
         Args:
             category: News category (e.g., 'ai', 'data-security')
-            limit: Maximum number of articles to return
+            limit: Maximum number of articles to return (default: 20)
+            offset: Number of articles to skip for pagination (default: 0)
         
         Returns:
             List of article dictionaries, sorted by published_at DESC
@@ -99,14 +100,15 @@ class AppwriteDatabase:
             return []
         
         try:
-            # Query articles by category, sorted by published date
+            # Query articles by category, sorted by published date with pagination
             response = self.databases.list_documents(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[
                     Query.equal('category', category),  # SDK v4.x uses string value
                     Query.order_desc('published_at'),
-                    Query.limit(limit)
+                    Query.limit(limit),
+                    Query.offset(offset)  # ← Pagination support
                 ]
             )
             
@@ -129,7 +131,7 @@ class AppwriteDatabase:
                     continue
             
             if articles:
-                print(f"✓ Retrieved {len(articles)} articles for '{category}' from Appwrite (L2 cache)")
+                print(f"✓ Retrieved {len(articles)} articles for '{category}' from Appwrite (offset: {offset})")
             
             return articles
             

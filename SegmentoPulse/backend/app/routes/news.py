@@ -10,14 +10,24 @@ cache_service = CacheService()
 appwrite_db = get_appwrite_db()
 
 @router.get("/{category}", response_model=NewsResponse)
-async def get_news_by_category(category: str):
+async def get_news_by_category(
+    category: str,
+    limit: int = 20,  # ← Pagination: items per page
+    page: int = 1     # ← Pagination: page number (1-indexed)
+):
     """
-    Get news articles by category with multi-layer caching (Phase 2)
+    Get news articles by category with multi-layer caching and pagination (Phase 4)
     
     **THE GOLDEN RULE: Users NEVER wait for external APIs**
     - Users only read from database (Appwrite)
     - Background workers populate the database every 15 minutes
     - If database is empty, return empty state (workers will fill it soon)
+    
+    **Pagination:**
+    - limit: Number of articles per page (default: 20, max: 100)
+    - page: Page number starting from 1 (default: 1)
+    - Example: page=1, limit=20 returns articles 1-20
+    - Example: page=2, limit=20 returns articles 21-40
     
     Caching Strategy:
     - L1 Cache: Redis (if available) - 600s TTL, ~5ms response
@@ -39,8 +49,15 @@ async def get_news_by_category(category: str):
     - magazines: Tech Magazines
     """
     try:
+        # Validate and cap pagination parameters
+        limit = min(limit, 100)  # Max 100 items per page
+        page = max(page, 1)  # Minimum page 1
+        offset = (page - 1) * limit  # Calculate offset
+        
         # L1: Check Redis cache (fastest path - ~5ms)
-        cached_data = await cache_service.get(f"news:{category}")
+        # Note: Cache key now includes pagination params
+        cache_key = f"news:{category}:p{page}:l{limit}"
+        cached_data = await cache_service.get(cache_key)
         if cached_data:
             return NewsResponse(
                 success=True,
@@ -52,11 +69,11 @@ async def get_news_by_category(category: str):
             )
         
         # L2: Check Appwrite database (fast persistent storage - ~50ms)
-        db_articles = await appwrite_db.get_articles(category, limit=20)
+        db_articles = await appwrite_db.get_articles(category, limit=limit, offset=offset)
         
         if db_articles:
             # Cache the database results in Redis for next request
-            await cache_service.set(f"news:{category}", db_articles)
+            await cache_service.set(cache_key, db_articles)
             
             return NewsResponse(
                 success=True,
@@ -69,7 +86,6 @@ async def get_news_by_category(category: str):
         
         # Database is empty - return empty state
         # Background workers will populate the database every 15 minutes
-        # User should check back soon or wait for automatic refresh
         return NewsResponse(
             success=True,
             category=category,
