@@ -72,6 +72,7 @@ async def root():
         }
     }
 
+
 @app.get("/health")
 @app.head("/health")  # ← Added for UptimeRobot compatibility
 async def health_check():
