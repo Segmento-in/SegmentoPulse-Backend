@@ -2,7 +2,7 @@
 Background Scheduler Service - Phase 3
 Automates news fetching and database cleanup using APScheduler
 """
-
+import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
