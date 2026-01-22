@@ -12,6 +12,7 @@ import logging
 from app.services.news_aggregator import NewsAggregator
 from app.services.appwrite_db import get_appwrite_db
 from app.services.cache_service import CacheService
+from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
 from app.config import settings
 
 # Setup logging
@@ -158,6 +159,22 @@ async def fetch_all_news():
     logger.info("   🔹 Throughput: %.1f articles/second", total_fetched / duration if duration > 0 else 0)
     logger.info("   🔹 Speed Improvement: ~12x faster than sequential")
     logger.info("═" * 80)
+    
+    # FAANG Optimization: Update adaptive scheduler intervals
+    from app.services.adaptive_scheduler import get_adaptive_scheduler
+    
+    adaptive = get_adaptive_scheduler(CATEGORIES)
+    if adaptive:
+        # Update intervals based on this run's statistics
+        for category, stats in category_stats.items():
+            if 'fetched' in stats:
+                new_interval = adaptive.update_category_velocity(
+                    category, 
+                    stats['fetched']
+                )
+        
+        # Print adaptive scheduler summary
+        adaptive.print_summary()
 
 
 async def fetch_and_validate_category(category: str) -> tuple:
