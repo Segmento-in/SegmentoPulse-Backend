@@ -3,7 +3,7 @@ Data Validation and Sanitization Layer
 FAANG-Level Quality Control for News Articles
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime
 import re
 from urllib.parse import urlparse
@@ -154,10 +154,98 @@ def calculate_quality_score(article: Dict) -> int:
     return min(max(score, 0), 100)
 
 
+def is_relevant_to_category(article: Dict, category: str) -> bool:
+    """
+    Validate that article is relevant to the specified category
+    
+    Prevents category pollution (e.g., "Apple pie" in Tech)
+    
+    Returns True only if article contains category-specific keywords
+    """
+    # Category keyword dictionaries
+    CATEGORY_KEYWORDS = {
+        'ai': [
+            'ai', 'artificial intelligence', 'machine learning', 'deep learning',
+            'neural network', 'gpt', 'llm', 'chatgpt', 'generative ai',
+            'computer vision', 'nlp', 'natural language', 'transformer'
+        ],
+        'data-security': [
+            'security', 'cybersecurity', 'data breach', 'hacking', 'vulnerability',
+            'encryption', 'malware', 'ransomware', 'firewall', 'threat'
+        ],
+        'data-governance': [
+            'governance', 'compliance', 'regulation', 'audit', 'policy',
+            'data quality', 'metadata', 'lineage', 'stewardship'
+        ],
+        'data-privacy': [
+            'privacy', 'gdpr', 'ccpa', 'consent', 'personal data',
+            'pii', 'anonymization', 'data protection', 'privacy law'
+        ],
+        'data-engineering': [
+            'data engineering', 'pipeline', 'etl', 'big data', 'spark',
+            'hadoop', 'kafka', 'airflow', 'data warehouse', 'snowflake'
+        ],
+        'business-intelligence': [
+            'business intelligence', 'bi', 'analytics', 'dashboard',
+            'tableau', 'power bi', 'looker', 'reporting', 'kpi'
+        ],
+        'business-analytics': [
+            'analytics', 'analysis', 'insights', 'metrics', 'data-driven',
+            'business analytics', 'predictive', 'forecasting'
+        ],
+        'customer-data-platform': [
+            'cdp', 'customer data', 'customer platform', 'crm',
+            'customer experience', 'personalization', 'segmentation'
+        ],
+        'data-centers': [
+            'data center', 'data centre', 'datacenter', 'server', 'infrastructure',
+            'colocation', 'edge computing', 'hyperscale'
+        ],
+        'cloud-computing': [
+            'cloud', 'aws', 'azure', 'google cloud', 'gcp', 'salesforce',
+            'alibaba cloud', 'tencent cloud', 'huawei cloud', 'cloudflare',
+            'saas', 'paas', 'iaas', 'serverless', 'kubernetes'
+        ],
+        'medium-article': [
+            'medium', 'article', 'blog', 'writing', 'publishing',
+            'content', 'story', 'author', 'blogging'
+        ],
+        'magazines': [
+            'technology', 'tech', 'innovation', 'digital', 'startup',
+            'software', 'hardware', 'gadget'
+        ]
+    }
+    
+    # Get keywords for this category
+    keywords = CATEGORY_KEYWORDS.get(category, [])
+    
+    if not keywords:
+        # Unknown category - allow (don't reject)
+        return True
+    
+    # Combine title and description for checking
+    title = article.get('title', '').lower()
+    description = article.get('description', '').lower()
+    text = f"{title} {description}"
+    
+    # Count keyword matches
+    matches = sum(1 for keyword in keywords if keyword.lower() in text)
+    
+    # Require at least 1 keyword match (lenient for now)
+    # Can increase to 2+ for stricter filtering
+    if matches >= 1:
+        return True
+    
+    # Log rejection for monitoring
+    print(f"🚫 Rejected '{article.get('title', 'Unknown')[:50]}' from {category} (0 keyword matches)")
+    return False
+
+
 # Export functions
 __all__ = [
     'is_valid_article',
     'sanitize_article',
     'generate_slug',
-    'calculate_quality_score'
+    'calculate_quality_score',
+    'is_relevant_to_category'
 ]

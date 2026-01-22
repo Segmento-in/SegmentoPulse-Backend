@@ -63,6 +63,7 @@ async def fetch_all_news():
     total_duplicates = 0
     total_errors = 0
     total_invalid = 0
+    total_irrelevant = 0  # NEW: Track category pollution
     category_stats = {}
     
     # FAANG Optimization: Parallel fetch all categories at once!
@@ -86,7 +87,7 @@ async def fetch_all_news():
             total_errors += 1
             continue
         
-        category, articles, invalid_count = result
+        category, articles, invalid_count, irrelevant_count = result
         
         if not articles:
             logger.warning("⚠️  No valid articles for category: %s", category)
@@ -94,7 +95,8 @@ async def fetch_all_news():
                 'fetched': 0,
                 'saved': 0,
                 'duplicates': 0,
-                'invalid': invalid_count
+                'invalid': invalid_count,
+                'irrelevant': irrelevant_count  # NEW
             }
             continue
         
@@ -110,13 +112,15 @@ async def fetch_all_news():
             total_saved += saved_count
             total_duplicates += duplicates
             total_invalid += invalid_count
+            total_irrelevant += irrelevant_count  # NEW
             
             # Store category stats
             category_stats[category] = {
                 'fetched': len(articles),
                 'saved': saved_count,
                 'duplicates': duplicates,
-                'invalid': invalid_count
+                'invalid': invalid_count,
+                'irrelevant': irrelevant_count  # NEW
             }
             
             # Update Redis cache (L1) if available
@@ -147,10 +151,12 @@ async def fetch_all_news():
     logger.info("   🔹 Total Saved (New): %d articles", total_saved)
     logger.info("   🔹 Total Duplicates Skipped: %d articles", total_duplicates)
     logger.info("   🔹 Total Invalid Rejected: %d articles", total_invalid)
+    logger.info("   🔹 Total Irrelevant Rejected: %d articles (category pollution)", total_irrelevant)
     logger.info("   🔹 Total Errors: %d categories", total_errors)
     logger.info("   🔹 Categories Processed: %d/%d", len(CATEGORIES) - total_errors, len(CATEGORIES))
     logger.info("   🔹 Deduplication Rate: %.1f%%", (total_duplicates / total_fetched * 100) if total_fetched > 0 else 0)
-    logger.info("   🔹 Quality Rate: %.1f%%", (total_fetched / (total_fetched + total_invalid) * 100) if (total_fetched + total_invalid) > 0 else 0)
+    total_rejected = total_invalid + total_irrelevant
+    logger.info("   🔹 Acceptance Rate: %.1f%%", (total_fetched / (total_fetched + total_rejected) * 100) if (total_fetched + total_rejected) > 0 else 0)
     logger.info("")
     logger.info("⏱️  PERFORMANCE:")
     logger.info("   🔹 Start: %s", start_time.strftime('%H:%M:%S'))
@@ -181,9 +187,12 @@ async def fetch_and_validate_category(category: str) -> tuple:
     """
     Fetch and validate articles for a single category
     
-    Returns: (category, valid_articles, invalid_count)
+    New: Now includes date normalization and category relevance checks!
+    
+    Returns: (category, valid_articles, invalid_count, irrelevant_count)
     """
-    from app.utils.data_validation import is_valid_article, sanitize_article
+    from app.utils.data_validation import is_valid_article, sanitize_article, is_relevant_to_category
+    from app.utils.date_parser import normalize_article_date
     
     try:
         logger.info("📌 Fetching %s...", category.upper())
@@ -193,28 +202,41 @@ async def fetch_and_validate_category(category: str) -> tuple:
         raw_articles = await news_aggregator.fetch_by_category(category)
         
         if not raw_articles:
-            return (category, [], 0)
+            return (category, [], 0, 0)
         
-        # Validate and sanitize
+        # Validate, filter, and sanitize
         valid_articles = []
         invalid_count = 0
+        irrelevant_count = 0
         
         for article in raw_articles:
-            if is_valid_article(article):
-                clean_article = sanitize_article(article)
-                valid_articles.append(clean_article)
-            else:
+            # Step 1: Basic validation (existing)
+            if not is_valid_article(article):
                 invalid_count += 1
+                continue
+            
+            # Step 2: Category relevance check (NEW!)
+            if not is_relevant_to_category(article, category):
+                irrelevant_count += 1
+                continue
+            
+            # Step 3: Normalize date to UTC ISO-8601 (NEW!)
+            article = normalize_article_date(article)
+            
+            # Step 4: Sanitize and clean (existing)
+            clean_article = sanitize_article(article)
+            valid_articles.append(clean_article)
         
-        logger.info("✓ %s: %d valid, %d invalid", category.upper(), len(valid_articles), invalid_count)
-        return (category, valid_articles, invalid_count)
+        logger.info("✓ %s: %d valid, %d invalid, %d irrelevant", 
+                    category.upper(), len(valid_articles), invalid_count, irrelevant_count)
+        return (category, valid_articles, invalid_count, irrelevant_count)
         
     except asyncio.TimeoutError:
         logger.error("⏱️  Timeout fetching %s (>30s)", category)
-        return (category, [], 0)
+        return (category, [], 0, 0)
     except Exception as e:
         logger.exception("❌ Error fetching %s", category)
-        return (category, [], 0)
+        return (category, [], 0, 0)
 
 
 async def cleanup_old_news():
@@ -337,19 +359,19 @@ def start_scheduler():
     logger.info("   ⏱️  Schedule: Every 15 minutes")
     logger.info("   📋 Task: Fetch news from all providers and update database")
     
-    # Job 2: Cleanup old news every 6 hours
+    # Job 2: Cleanup old news every 2 hours
     scheduler.add_job(
         cleanup_old_news,
-        trigger=CronTrigger(hour='0,6,12,18', minute=0),  # Every 6 hours at :00
+        trigger=IntervalTrigger(hours=2),  # Every 2 hours
         id='cleanup_old_news',
-        name='Database Janitor (every 6 hours)',
+        name='Database Janitor (every 2 hours)',
         replace_existing=True
     )
     logger.info("")
     logger.info("✅ Job #2 Registered: 🧹 Database Janitor")
-    logger.info("   ⏱️  Schedule: Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)")
-    logger.info("   📋 Task: Delete articles older than 48 hours (500 per run)")
-    logger.info("   🔢 Total cleanup capacity: 2,000 articles/day")
+    logger.info("   ⏱️  Schedule: Every 2 hours")
+    logger.info("   📋 Task: Delete articles older than 48 hours (up to 500 per run)")
+    logger.info("   🔢 Total cleanup capacity: 6,000 articles/day (12 runs × 500)")
     
     # Start the scheduler
     logger.info("")
