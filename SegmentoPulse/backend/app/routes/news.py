@@ -40,64 +40,43 @@ async def get_news_by_category(
     Categories: ai, data-security, cloud-computing, etc.
     """
     try:
-    
         from app.utils.cursor_pagination import CursorPagination
-        from app.utils.stale_while_revalidate import StaleWhileRevalidate
+        from appwrite.query import Query
         
         # Validate limit
         limit = min(limit, 100)  # Max 100 items per page
         
-        # Build cache key with cursor
+        # Build cache key
         cache_key = f"news:{category}:cursor:{cursor or 'first'}:l{limit}"
         
-        # Define fetch function for stale-while-revalidate
-        async def fetch_from_db():
-            """Fetch articles from database with cursor pagination"""
-            # Build query filters with cursor
-            from appwrite.query import Query
-            
-            queries = CursorPagination.build_query_filters(cursor, category)
-            queries.append(Query.limit(limit + 1))  # Fetch one extra to check if more exist
-            
-            articles = await appwrite_db.get_articles_with_queries(queries)
-            
-            # Check if more pages exist
-            has_more = len(articles) > limit
-            if has_more:
-                articles = articles[:limit]  # Remove the extra one
-            
-            # Generate next cursor from last article
-            next_cursor = None
-            if has_more and articles:
-                last_article = articles[-1]
-                next_cursor = CursorPagination.encode_cursor(
-                    last_article.get('published_at'),
-                    last_article.get('$id')
-                )
-            
-            return {
-                'articles': articles,
-                'next_cursor': next_cursor,
-                'has_more': has_more
-            }
+        # Simple fetch from database (no SWR since Redis is often disabled on HF)
+        # Build query filters with cursor
+        queries = CursorPagination.build_query_filters(cursor, category)
+        queries.append(Query.limit(limit + 1))  # Fetch one extra to check if more exist
         
-        # Use stale-while-revalidate caching
-        swr_cache = StaleWhileRevalidate(cache_service.redis if hasattr(cache_service, 'redis') else None)
+        articles = await appwrite_db.get_articles_with_queries(queries)
         
-        result = await swr_cache.get_or_fetch(
-            cache_key=cache_key,
-            fetch_func=fetch_from_db,
-            ttl=600,        # Fresh for 10 minutes
-            stale_ttl=3600  #Serve stale for up to 1 hour
-        )
+        # Check if more pages exist
+        has_more = len(articles) > limit
+        if has_more:
+            articles = articles[:limit]  # Remove the extra one
+        
+        # Generate next cursor from last article
+        next_cursor = None
+        if has_more and articles:
+            last_article = articles[-1]
+            next_cursor = CursorPagination.encode_cursor(
+                last_article.get('publishedAt') or last_article.get('published_at'),
+                last_article.get('$id')
+            )
         
         return NewsResponse(
             success=True,
             category=category,
-            count=len(result.get('articles', [])),
-            articles=result.get('articles', []),
-            cached=True,
-            source="database"
+            count=len(articles),
+            articles=articles,
+            cached=False,
+            source="appwrite"
         )
         
     except Exception as e:
