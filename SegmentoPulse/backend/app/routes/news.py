@@ -88,13 +88,16 @@ async def get_news_by_category(
             cache_key=cache_key,
             fetch_func=fetch_from_db,
             ttl=600,        # Fresh for 10 minutes
-            stale_ttl=3600  # Serve stale for up to 1 hour
+            stale_ttl=3600  #Serve stale for up to 1 hour
         )
         
         return NewsResponse(
             success=True,
             category=category,
-            message="News data is being fetched by background workers. Please check back in a few minutes."
+            count=len(result.get('articles', [])),
+            articles=result.get('articles', []),
+            cached=True,
+            source="database"
         )
         
     except Exception as e:
