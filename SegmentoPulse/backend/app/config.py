@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "https://segmento.in"]
+    CORS_ORIGINS: List[str] = ["https://segmento.in"]
     
     # News API
     NEWS_API_KEY: str = ""
