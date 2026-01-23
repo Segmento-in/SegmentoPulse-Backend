@@ -27,10 +27,10 @@ class FirebaseService:
         try:
             # Priority 1: Try initializing from Environment Variable (JSON String)
             # This is common for Hugging Face Spaces / Cloud deployments
-            if hasattr(settings, 'FIREBASE_CREDENTIALS_JSON') and settings.FIREBASE_CREDENTIALS_JSON:
+            if hasattr(settings, 'FIREBASE_CREDENTIALS') and settings.FIREBASE_CREDENTIALS:
                 try:
                     import json
-                    cred_dict = json.loads(settings.FIREBASE_CREDENTIALS_JSON)
+                    cred_dict = json.loads(settings.FIREBASE_CREDENTIALS)
                     cred = credentials.Certificate(cred_dict)
                     firebase_admin.initialize_app(cred, {
                         'databaseURL': settings.FIREBASE_DATABASE_URL if hasattr(settings, 'FIREBASE_DATABASE_URL') else ''
