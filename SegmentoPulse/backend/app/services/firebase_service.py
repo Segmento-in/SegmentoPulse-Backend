@@ -25,7 +25,25 @@ class FirebaseService:
             return
         
         try:
-            # Check if credentials file exists before attempting initialization
+            # Priority 1: Try initializing from Environment Variable (JSON String)
+            # This is common for Hugging Face Spaces / Cloud deployments
+            if hasattr(settings, 'FIREBASE_CREDENTIALS') and settings.FIREBASE_CREDENTIALS:
+                try:
+                    import json
+                    cred_dict = json.loads(settings.FIREBASE_CREDENTIALS)
+                    cred = credentials.Certificate(cred_dict)
+                    firebase_admin.initialize_app(cred, {
+                        'databaseURL': settings.FIREBASE_DATABASE_URL if hasattr(settings, 'FIREBASE_DATABASE_URL') else ''
+                    })
+                    self.db_ref = db.reference('pulse/article_views')
+                    self.initialized = True
+                    print("Firebase initialized successfully from Environment Variable")
+                    return
+                except Exception as json_err:
+                    print(f"Error initializing from FIREBASE_CREDENTIALS_JSON: {json_err}")
+                    # Fallthrough to file check if this fails
+
+            # Priority 2: Check if credentials file exists
             import os
             creds_path = settings.FIREBASE_CREDENTIALS_PATH if hasattr(settings, 'FIREBASE_CREDENTIALS_PATH') else './firebase-credentials.json'
             

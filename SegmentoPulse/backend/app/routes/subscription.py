@@ -3,7 +3,7 @@ Subscription API Routes
 Handles newsletter subscriptions and unsubscribe functionality
 """
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -20,7 +20,8 @@ class SubscribeRequest(BaseModel):
     topics: Optional[List[str]] = ["news", "security", "cloud", "ai"]
     preference: str = "Weekly"  # Default to Weekly for backward compatibility
     
-    @validator('preference')
+    @field_validator('preference')
+    @classmethod
     def validate_preference(cls, v):
         allowed = ["Morning", "Afternoon", "Evening", "Weekly", "Monthly"]
         if v not in allowed:

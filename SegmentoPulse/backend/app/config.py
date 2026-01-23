@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     FIREBASE_DATABASE_URL: str = ""
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_CREDENTIALS_PATH: str = "./firebase-credentials.json"
+    FIREBASE_CREDENTIALS: Optional[str] = None  # Support for raw JSON content (e.g. HF Spaces)
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
