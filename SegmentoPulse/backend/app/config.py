@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     FIREBASE_DATABASE_URL: str = ""
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_CREDENTIALS_PATH: str = "./firebase-credentials.json"
-    
+    FIREBASE_CREDENTIALS_JSON: Optional[str] = None
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_PASSWORD: str = ""
