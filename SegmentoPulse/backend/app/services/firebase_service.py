@@ -32,15 +32,19 @@ class FirebaseService:
                     import json
                     cred_dict = json.loads(settings.FIREBASE_CREDENTIALS)
                     cred = credentials.Certificate(cred_dict)
-                    firebase_admin.initialize_app(cred, {
-                        'databaseURL': settings.FIREBASE_DATABASE_URL if hasattr(settings, 'FIREBASE_DATABASE_URL') else ''
-                    })
+                    
+                    # check if already initialized to prevent error
+                    if not firebase_admin._apps:
+                        firebase_admin.initialize_app(cred, {
+                            'databaseURL': settings.FIREBASE_DATABASE_URL if hasattr(settings, 'FIREBASE_DATABASE_URL') else ''
+                        })
+                        
                     self.db_ref = db.reference('pulse/article_views')
                     self.initialized = True
                     print("Firebase initialized successfully from Environment Variable")
                     return
                 except Exception as json_err:
-                    print(f"Error initializing from FIREBASE_CREDENTIALS_JSON: {json_err}")
+                    print(f"Error initializing from FIREBASE_CREDENTIALS: {json_err}")
                     # Fallthrough to file check if this fails
 
             # Priority 2: Check if credentials file exists
