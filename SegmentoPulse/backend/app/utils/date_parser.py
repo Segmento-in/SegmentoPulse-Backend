@@ -47,19 +47,48 @@ def parse_date_to_iso(date_str: str) -> str:
         return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
-def normalize_article_date(article: dict) -> dict:
+def normalize_article_date(article):
     """
-    Normalize the publishedAt field in an article dict
+    Normalize the publishedAt field in an article
     
-    Modifies article in-place and returns it.
+    HOTFIX (2026-01-23): Now handles both Pydantic Article models AND dicts
+    
+    Args:
+        article: Article model or dict
+    
+    Returns:
+        dict with normalized publishedAt field
     """
-    if 'publishedAt' in article:
-        article['publishedAt'] = parse_date_to_iso(article['publishedAt'])
+    # HOTFIX: Convert Pydantic model to dict if needed
+    if hasattr(article, 'model_dump'):
+        # It's a Pydantic v2 model
+        article_dict = article.model_dump()
+    elif hasattr(article, 'dict'):
+        # It's a Pydantic v1 model
+        article_dict = article.dict()
+    elif isinstance(article, dict):
+        # Already a dict - create a copy to avoid mutating original
+        article_dict = article.copy()
+    else:
+        # Unknown type - try to convert to dict
+        article_dict = dict(article)
+    
+    # Normalize the date
+    if 'publishedAt' in article_dict:
+        published_at = article_dict['publishedAt']
+        # Handle datetime objects
+        if isinstance(published_at, datetime):
+            article_dict['publishedAt'] = published_at.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+        elif isinstance(published_at, str):
+            article_dict['publishedAt'] = parse_date_to_iso(published_at)
+        else:
+            # Unknown type, use current time
+            article_dict['publishedAt'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     else:
         # If missing, use current time
-        article['publishedAt'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        article_dict['publishedAt'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     
-    return article
+    return article_dict
 
 
 def validate_date_format(date_str: str) -> bool:
