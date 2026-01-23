@@ -387,3 +387,150 @@ async def get_scheduler_status():
             "success": False,
             "error": str(e)
         }
+
+
+# Newsletter Admin Endpoints
+@router.post("/newsletter/send-now")
+async def send_newsletter_now(preference: str = "Weekly"):
+    """
+    Manually trigger newsletter for specific preference group
+    
+    Useful for testing before production deployment or sending ad-hoc newsletters.
+    
+    Args:
+        preference: Newsletter preference (Morning/Afternoon/Evening/Weekly/Monthly)
+    
+    Returns:
+        Send statistics and status
+    """
+    try:
+        from app.services.scheduler import trigger_newsletter_now
+        
+        # Validate preference
+        allowed_preferences = ["Morning", "Afternoon", "Evening", "Weekly", "Monthly"]
+        if preference not in allowed_preferences:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid preference. Must be one of: {allowed_preferences}"
+            )
+        
+        # Trigger newsletter
+        result = await trigger_newsletter_now(preference)
+        
+        return {
+            "success": True,
+            "preference": preference,
+            "timestamp": str(asyncio.get_event_loop().time()),
+            **result
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send newsletter: {str(e)}"
+        )
+
+
+@router.get("/subscribers/analytics")
+async def get_subscriber_analytics():
+    """
+    Get subscriber distribution by preference
+    
+    Shows how many subscribers have chosen each newsletter timing.
+    Useful for understanding user preferences and planning content strategy.
+    
+    Returns:
+        Total active subscribers and breakdown by preference
+    """
+    try:
+        from app.services.firebase_service import get_firebase_service
+        
+        firebase = get_firebase_service()
+        
+        if not firebase.initialized:
+            raise HTTPException(
+                status_code=503,
+                detail="Firebase service not available"
+            )
+        
+        all_subscribers = firebase.get_all_subscribers()
+        
+        # Calculate preference distribution
+        preference_counts = {
+            "Morning": 0,
+            "Afternoon": 0,
+            "Evening": 0,
+            "Weekly": 0,
+            "Monthly": 0
+        }
+        
+        active_count = 0
+        total_count = len(all_subscribers)
+        
+        for sub in all_subscribers:
+            if sub.get('subscribed', True):
+                active_count += 1
+                pref = sub.get('preference', 'Weekly')
+                if pref in preference_counts:
+                    preference_counts[pref] += 1
+        
+        return {
+            "total_subscribers": total_count,
+            "active_subscribers": active_count,
+            "unsubscribed": total_count - active_count,
+            "distribution_by_preference": preference_counts,
+            " percentage_distribution": {
+                pref: round((count / active_count * 100), 2) if active_count > 0 else 0
+                for pref, count in preference_counts.items()
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get analytics: {str(e)}"
+        )
+
+
+@router.get("/newsletter/preview/{preference}")
+async def preview_newsletter_content(preference: str):
+    """
+    Preview newsletter content without sending emails
+    
+    Useful for testing and debugging content selection logic.
+    Shows what articles would be included in the next newsletter.
+    
+    Args:
+        preference: Newsletter preference to preview
+    
+    Returns:
+        Article list and metadata
+    """
+    try:
+        from app.services.newsletter_service import preview_newsletter_content as preview
+        
+        # Validate preference
+        allowed_preferences = ["Morning", "Afternoon", "Evening", "Weekly", "Monthly"]
+        if preference not in allowed_preferences:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid preference. Must be one of: {allowed_preferences}"
+            )
+        
+        result = await preview(preference)
+        
+        return {
+            "success": True,
+            **result
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to preview content: {str(e)}"
+        )
+

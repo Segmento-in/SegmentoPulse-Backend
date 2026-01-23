@@ -190,7 +190,7 @@ class FirebaseService:
             return False
     
     def get_all_subscribers(self) -> list:
-        """Get all subscribers from database"""
+        """Get all subscribers from database with migration support"""
         if not self.initialized:
             return []
         
@@ -201,11 +201,124 @@ class FirebaseService:
             if not all_subscribers:
                 return []
             
-            # Convert to list
-            return list(all_subscribers.values())
+            # Convert to list and add default preference for legacy subscribers
+            subscribers = []
+            for subscriber_data in all_subscribers.values():
+                # Migration: Add default 'Weekly' preference for existing subscribers
+                if 'preference' not in subscriber_data:
+                    subscriber_data['preference'] = 'Weekly'
+                subscribers.append(subscriber_data)
+            
+            return subscribers
         except Exception as e:
             print(f"Error getting all subscribers: {e}")
             return []
+    
+    def get_subscribers_by_preference(self, preference: str) -> list:
+        """
+        Get all subscribers filtered by newsletter preference (SERVER-SIDE FILTER)
+        
+        PERFORMANCE OPTIMIZATION:
+        - OLD: Fetch ALL subscribers → Filter in Python → O(N) memory
+        - NEW: Firebase server-side filter → Only returns matches → O(matched) memory
+        
+        FAIRNESS FIX:
+        - Sorts by 'lastSentAt' (oldest first) to ensure ROTATION
+        - Prevents "unlucky subscriber" problem where last N never get emails
+        
+        This prevents memory issues when subscriber count grows to 10K+
+        """
+        if not self.initialized:
+            return []
+        
+        try:
+            subscribers_ref = db.reference('pulse/subscribers')
+            
+            # SERVER-SIDE FILTER: Only fetch subscribers with matching preference
+            # This uses Firebase's indexing to avoid loading all data
+            query = subscribers_ref.order_by_child('preference').equal_to(preference)
+            filtered_subscribers = query.get()
+            
+            if not filtered_subscribers:
+                return []
+            
+            # Convert to list and filter for active subscriptions only
+            subscribers = []
+            for subscriber_id, subscriber_data in filtered_subscribers.items():
+                # Only include active subscribers
+                if subscriber_data.get('subscribed', True):
+                    subscribers.append(subscriber_data)
+            
+            # FAIRNESS FIX: Sort by lastSentAt (oldest first)
+            # This ensures subscribers who didn't get email yesterday appear first
+            # Prevents quota limiting from always skipping the same users
+            subscribers.sort(
+                key=lambda x: x.get('lastSentAt', '1970-01-01T00:00:00Z')
+            )
+            
+            return subscribers
+            
+        except Exception as e:
+            print(f"Error getting subscribers by preference: {e}")
+            # FALLBACK: If indexing not set up, use the old method
+            print(f"⚠️  Firebase indexing may not be configured for 'preference' field")
+            print(f"   Falling back to client-side filtering (slower)")
+            
+            try:
+                all_subscribers = self.get_all_subscribers()
+                filtered = [
+                    sub for sub in all_subscribers 
+                    if sub.get('preference') == preference and sub.get('subscribed', True)
+                ]
+                # Also sort fallback for fairness
+                filtered.sort(
+                    key=lambda x: x.get('lastSentAt', '1970-01-01T00:00:00Z')
+                )
+                return filtered
+            except Exception as fallback_error:
+                print(f"❌ Fallback failed: {fallback_error}")
+                return []
+    
+    def update_preference(self, email: str, preference: str) -> bool:
+        """Update subscriber's newsletter preference"""
+        if not self.initialized:
+            return False
+        
+        try:
+            import hashlib
+            email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
+            
+            subscribers_ref = db.reference('pulse/subscribers')
+            subscriber_ref = subscribers_ref.child(email_hash)
+            
+            subscriber_ref.update({'preference': preference})
+            return True
+        except Exception as e:
+            print(f"Error updating preference: {e}")
+            return False
+    
+    def update_last_sent(self, email: str) -> bool:
+        """Update timestamp of last newsletter sent (UTC)"""
+        if not self.initialized:
+            return False
+        
+        try:
+            import hashlib
+            from datetime import datetime, timezone
+            
+            email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
+            
+            subscribers_ref = db.reference('pulse/subscribers')
+            subscriber_ref = subscribers_ref.child(email_hash)
+            
+            # Store in UTC format
+            utc_now = datetime.now(timezone.utc).isoformat()
+            subscriber_ref.update({'lastSentAt': utc_now})
+            
+            return True
+        except Exception as e:
+            print(f"Error updating last sent timestamp: {e}")
+            return False
 
 
 # Singleton instance

@@ -8,6 +8,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, timedelta
 import logging
+import pytz
 
 from app.services.news_aggregator import NewsAggregator
 from app.services.appwrite_db import get_appwrite_db
@@ -373,6 +374,106 @@ def start_scheduler():
     logger.info("   📋 Task: Delete articles older than 48 hours (up to 500 per run)")
     logger.info("   🔢 Total cleanup capacity: 6,000 articles/day (12 runs × 500)")
     
+    # Import newsletter service (lazy import to avoid circular dependencies)
+    from app.services.newsletter_service import send_scheduled_newsletter
+    
+    # IST timezone for newsletter scheduling
+    IST = pytz.timezone('Asia/Kolkata')
+    
+    # Job 3: Morning Newsletter - 7:00 AM IST, Monday-Saturday
+    scheduler.add_job(
+        send_scheduled_newsletter,
+        trigger=CronTrigger(
+            hour=7, minute=0,
+            day_of_week='mon-sat',
+            timezone=IST
+        ),
+        args=["Morning"],
+        id='newsletter_morning',
+        name='Morning Newsletter (7 AM IST)',
+        replace_existing=True,
+        max_instances=1
+    )
+    logger.info("")
+    logger.info("✅ Job #3 Registered: ☀️ Morning Newsletter")
+    logger.info("   ⏱️  Schedule: 7:00 AM IST, Monday-Saturday")
+    logger.info("   📋 Task: Send curated news to Morning preference subscribers")
+    
+    # Job 4: Afternoon Newsletter - 2:00 PM IST, Monday-Friday
+    scheduler.add_job(
+        send_scheduled_newsletter,
+        trigger=CronTrigger(
+            hour=14, minute=0,
+            day_of_week='mon-fri',
+            timezone=IST
+        ),
+        args=["Afternoon"],
+        id='newsletter_afternoon',
+        name='Afternoon Newsletter (2 PM IST)',
+        replace_existing=True,
+        max_instances=1
+    )
+    logger.info("")
+    logger.info("✅ Job #4 Registered: 📰 Afternoon Newsletter")
+    logger.info("   ⏱️  Schedule: 2:00 PM IST, Monday-Friday")
+    logger.info("   📋 Task: Send midday update to Afternoon preference subscribers")
+    
+    # Job 5: Evening Newsletter - 7:00 PM IST, Daily
+    scheduler.add_job(
+        send_scheduled_newsletter,
+        trigger=CronTrigger(
+            hour=19, minute=0,
+            timezone=IST
+        ),
+        args=["Evening"],
+        id='newsletter_evening',
+        name='Evening Newsletter (7 PM IST)',
+        replace_existing=True,
+        max_instances=1
+    )
+    logger.info("")
+    logger.info("✅ Job #5 Registered: 🌙 Evening Newsletter")
+    logger.info("   ⏱️  Schedule: 7:00 PM IST, Daily")
+    logger.info("   📋 Task: Send daily digest to Evening preference subscribers")
+    
+    # Job 6: Weekly Newsletter - Sunday 9:00 AM IST
+    scheduler.add_job(
+        send_scheduled_newsletter,
+        trigger=CronTrigger(
+            hour=9, minute=0,
+            day_of_week='sun',
+            timezone=IST
+        ),
+        args=["Weekly"],
+        id='newsletter_weekly',
+        name='Weekly Newsletter (Sunday 9 AM IST)',
+        replace_existing=True,
+        max_instances=1
+    )
+    logger.info("")
+    logger.info("✅ Job #6 Registered: 📅 Weekly Newsletter")
+    logger.info("   ⏱️  Schedule: Sunday 9:00 AM IST")
+    logger.info("   📋 Task: Send weekly roundup to Weekly preference subscribers")
+    
+    # Job 7: Monthly Newsletter - 1st of month, 9:00 AM IST
+    scheduler.add_job(
+        send_scheduled_newsletter,
+        trigger=CronTrigger(
+            hour=9, minute=0,
+            day=1,
+            timezone=IST
+        ),
+        args=["Monthly"],
+        id='newsletter_monthly',
+        name='Monthly Newsletter (1st, 9 AM IST)',
+        replace_existing=True,
+        max_instances=1
+    )
+    logger.info("")
+    logger.info("✅ Job #7 Registered: 📊 Monthly Newsletter")
+    logger.info("   ⏱️  Schedule: 1st of month, 9:00 AM IST")
+    logger.info("   📋 Task: Send monthly intelligence to Monthly preference subscribers")
+    
     # Start the scheduler
     logger.info("")
     logger.info("🚀 Starting scheduler engine...")
@@ -412,7 +513,19 @@ async def trigger_fetch_now():
 async def trigger_cleanup_now():
     """Manually trigger cleanup (for testing)"""
     logger.info("")
-    logger.info("═" * 80)
+    logger.info("=" * 80)
     logger.info("🔧 [MANUAL TRIGGER] Running cleanup job NOW...")
-    logger.info("═" * 80)
+    logger.info("=" * 80)
     await cleanup_old_news()
+
+
+async def trigger_newsletter_now(preference: str):
+    """Manually trigger newsletter for specific preference (for testing)"""
+    from app.services.newsletter_service import send_scheduled_newsletter
+    
+    logger.info("")
+    logger.info("=" * 80)
+    logger.info(f"🔧 [MANUAL TRIGGER] Running {preference} newsletter job NOW...")
+    logger.info("=" * 80)
+    result = await send_scheduled_newsletter(preference)
+    return result

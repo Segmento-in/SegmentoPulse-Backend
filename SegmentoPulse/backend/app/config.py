@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
-from typing import List, Union
+from typing import List, Union, Optional
 
 class Settings(BaseSettings):
     """Application settings"""
@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     APPWRITE_API_KEY: str = ""
     APPWRITE_DATABASE_ID: str = "segmento_db"
     APPWRITE_COLLECTION_ID: str = "articles"
+    
+    # Admin Alerting (Optional - Discord/Slack webhook URL)
+    ADMIN_WEBHOOK_URL: Optional[str] = None
     
     @field_validator('CORS_ORIGINS', 'NEWS_PROVIDER_PRIORITY', mode='before')
     @classmethod

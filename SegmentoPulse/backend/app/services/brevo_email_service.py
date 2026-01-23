@@ -27,6 +27,79 @@ class BrevoEmailService:
         self.contacts_api = sib_api_v3_sdk.ContactsApi(
             sib_api_v3_sdk.ApiClient(configuration)
         )
+        self.account_api = sib_api_v3_sdk.AccountApi(
+            sib_api_v3_sdk.ApiClient(configuration)
+        )
+    
+    def get_account_info(self) -> Optional[Dict]:
+        """
+        Get Brevo account information including email credits
+        
+        Returns: {
+            'email_credits': int,  # Remaining email credits
+            'plan_type': str,
+            'credits_type': str  # 'monthly' or 'payAsYouGo'
+        }
+        """
+        try:
+            account = self.account_api.get_account()
+            
+            # Extract email plan info
+            email_plan = account.plan[0] if account.plan else None
+            
+            if not email_plan:
+                print("⚠️  No email plan found in Brevo account")
+                return None
+            
+            return {
+                'email_credits': email_plan.credits,
+                'plan_type': email_plan.type,
+                'credits_type': email_plan.credits_type
+            }
+        except ApiException as e:
+            print(f"Brevo API error getting account info: {e}")
+            return None
+        except Exception as e:
+            print(f"Error getting account info: {e}")
+            return None
+    
+    def check_quota(self, required_emails: int) -> Dict[str, any]:
+        """
+        Check if there are enough email credits for the send job
+        
+        Args:
+            required_emails: Number of emails we want to send
+        
+        Returns: {
+            'sufficient': bool,
+            'remaining_credits': int,
+            'required': int,
+            'shortfall': int  # How many we can't send (0 if sufficient)
+        }
+        """
+        account_info = self.get_account_info()
+        
+        if not account_info:
+            # If we can't check quota, assume unlimited (best effort)
+            print("⚠️  Could not check Brevo quota, proceeding with send")
+            return {
+                'sufficient': True,
+                'remaining_credits': -1,  # Unknown
+                'required': required_emails,
+                'shortfall': 0
+            }
+        
+        remaining = account_info['email_credits']
+        sufficient = remaining >= required_emails
+        shortfall = max(0, required_emails - remaining)
+        
+        return {
+            'sufficient': sufficient,
+            'remaining_credits': remaining,
+            'required': required_emails,
+            'shortfall': shortfall,
+            'plan_type': account_info.get('plan_type', 'unknown')
+        }
     
     def generate_unsubscribe_token(self, email: str) -> str:
         """Generate unique token for unsubscribe links"""
@@ -126,18 +199,61 @@ class BrevoEmailService:
     
     def send_newsletter(
         self, 
-        subject: str, 
+        preference: str,
+        subject: str,
+        greeting: str,
         articles: List[Dict],
-        subscribers: List[Dict]
+        subscribers: List[Dict],
+        max_send: Optional[int] = None
     ) -> Dict[str, int]:
         """
-        Send newsletter to all subscribers
-        Returns: {"sent": count, "failed": count}
+        Send newsletter to subscribers with QUOTA-AWARE sending
+        
+        Args:
+            preference: Newsletter preference (Morning/Afternoon/Evening/Weekly/Monthly)
+            subject: Email subject line
+            greeting: Personalized greeting text
+            articles: List of article dictionaries
+            subscribers: List of subscriber dictionaries
+            max_send: Optional limit on number of emails (for quota management)
+            
+        Returns: {
+            "sent": count, 
+            "failed": count,
+            "quota_limited": bool,  # True if we hit quota limits
+            "remaining_credits": int  # Brevo credits remaining after send
+        }
         """
         sent = 0
         failed = 0
+        quota_limited = False
         
-        for subscriber in subscribers:
+        # QUOTA CHECK: Determine how many we can actually send
+        total_subscribers = len(subscribers)
+        quota_status = self.check_quota(total_subscribers)
+        
+        if not quota_status['sufficient']:
+            print(f"")
+            print(f"{'='*80}")
+            print(f"⚠️  QUOTA WARNING: Brevo API Limit Reached!")
+            print(f"   Requested: {quota_status['required']} emails")
+            print(f"   Available: {quota_status['remaining_credits']} credits")
+            print(f"   Shortfall: {quota_status['shortfall']} emails WILL NOT be sent")
+            print(f"   Plan: {quota_status.get('plan_type', 'unknown')}")
+            print(f"{'='*80}")
+            print(f"")
+            quota_limited = True
+            # Limit sending to available quota
+            max_send = quota_status['remaining_credits']
+        
+        # Apply quota limit if set
+        subscribers_to_send = subscribers[:max_send] if max_send else subscribers
+        
+        print(f"📧 Sending to {len(subscribers_to_send)} of {total_subscribers} subscribers")
+        if quota_limited:
+            print(f"   ⚠️  {total_subscribers - len(subscribers_to_send)} subscribers SKIPPED due to quota")
+        
+        for subscriber in subscribers_to_send:
             if not subscriber.get('subscribed', True):
                 continue
                 
@@ -186,11 +302,11 @@ class BrevoEmailService:
                     </head>
                     <body>
                         <div class="header">
-                            <h1>{subject}</h1>
+                            <h1>{preference} Newsletter</h1>
                         </div>
                         <div class="content">
                             <h2>Hi {name},</h2>
-                            <p>Here's your curated tech news digest from SegmentoPulse:</p>
+                            <p>{greeting}</p>
                             {articles_html}
                             <p style="text-align: center; margin-top: 30px;">
                                 <a href="https://segmento.in/pulse" style="background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
@@ -214,7 +330,16 @@ class BrevoEmailService:
                 print(f"Failed to send to {subscriber.get('email')}: {e}")
                 failed += 1
         
-        return {"sent": sent, "failed": failed}
+        # Get final quota status after sending
+        final_quota = self.check_quota(0)  # Just to get remaining credits
+        
+        return {
+            "sent": sent, 
+            "failed": failed,
+            "quota_limited": quota_limited,
+            "remaining_credits": final_quota.get('remaining_credits', -1),
+            "skipped_count": total_subscribers - len(subscribers_to_send) if quota_limited else 0
+        }
     
     def send_unsubscribe_confirmation(self, email: str, name: str) -> bool:
         """Send confirmation email after unsubscribe"""

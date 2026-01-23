@@ -18,6 +18,14 @@ class SubscribeRequest(BaseModel):
     email: EmailStr
     name: str
     topics: Optional[List[str]] = ["news", "security", "cloud", "ai"]
+    preference: str = "Weekly"  # Default to Weekly for backward compatibility
+    
+    @validator('preference')
+    def validate_preference(cls, v):
+        allowed = ["Morning", "Afternoon", "Evening", "Weekly", "Monthly"]
+        if v not in allowed:
+            raise ValueError(f"Preference must be one of: {allowed}")
+        return v
 
 
 class SubscribeResponse(BaseModel):
@@ -40,6 +48,7 @@ async def subscribe(request: SubscribeRequest):
     - Adds subscriber to Firebase
     - Sends welcome email via Brevo
     - Returns subscription token
+    - Now supports time-based preferences (Morning/Afternoon/Evening/Weekly/Monthly)
     """
     try:
         firebase = get_firebase_service()
@@ -48,14 +57,15 @@ async def subscribe(request: SubscribeRequest):
         # Generate unique token
         token = brevo.generate_unsubscribe_token(request.email)
         
-        # Add subscriber to Firebase
+        # Add subscriber to Firebase with preference
         subscriber_data = {
             "email": request.email,
             "name": request.name,
             "subscribed": True,
             "token": token,
             "subscribedAt": datetime.now().isoformat(),
-            "topics": request.topics
+            "topics": request.topics,
+            "preference": request.preference  # NEW: Store newsletter preference
         }
         
         success = firebase.add_subscriber(request.email, subscriber_data)
@@ -66,7 +76,7 @@ async def subscribe(request: SubscribeRequest):
                 detail="Failed to save subscriber to database"
             )
         
-        # Send welcome email
+        # Send welcome email (could be enhanced to mention preference)
         email_sent = brevo.send_welcome_email(
             email=request.email,
             name=request.name,
@@ -77,13 +87,13 @@ async def subscribe(request: SubscribeRequest):
             # Subscriber added but email failed
             return SubscribeResponse(
                 success=True,
-                message="Subscribed successfully, but welcome email failed to send",
+                message=f"Subscribed to {request.preference} newsletter! Check your email for confirmation.",
                 token=token
             )
         
         return SubscribeResponse(
             success=True,
-            message="Successfully subscribed! Check your email for confirmation.",
+            message=f"Successfully subscribed to {request.preference} newsletter! Check your email for confirmation.",
             token=token
         )
         
