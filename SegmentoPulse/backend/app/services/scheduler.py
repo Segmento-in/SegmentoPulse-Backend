@@ -200,7 +200,26 @@ async def fetch_and_validate_category(category: str) -> tuple:
         
         # Fetch from external APIs
         news_aggregator = NewsAggregator()
-        raw_articles = await news_aggregator.fetch_by_category(category)
+        
+        # FAANG Optimization: Concurrent fetch from Main Provider Chain + Medium
+        # This ensures we get high-quality API news AND Medium blogs simultaneously
+        main_task = news_aggregator.fetch_by_category(category)
+        medium_task = news_aggregator.fetch_from_provider('medium', category)
+        
+        results = await asyncio.gather(main_task, medium_task, return_exceptions=True)
+        
+        # Combine results
+        raw_articles = []
+        
+        # Result 0: Main Provider Chain
+        if isinstance(results[0], list):
+            raw_articles.extend(results[0])
+        
+        # Result 1: Medium RSS
+        if isinstance(results[1], list):
+            if results[1]: # Only log if we found Medium articles
+                logger.info("   + Found %d Medium articles for %s", len(results[1]), category)
+            raw_articles.extend(results[1])
         
         if not raw_articles:
             return (category, [], 0, 0)

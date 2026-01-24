@@ -8,7 +8,9 @@ from app.services.news_providers import (
     GNewsProvider, 
     NewsAPIProvider, 
     NewsDataProvider, 
-    GoogleNewsRSSProvider
+    NewsDataProvider, 
+    GoogleNewsRSSProvider,
+    MediumRSSProvider
 )
 from app.config import settings
 
@@ -34,7 +36,11 @@ class NewsAggregator:
             self.providers['newsdata'] = NewsDataProvider(settings.NEWSDATA_API_KEY)
         
         # Always include Google News RSS as fallback (no API key needed)
+        # Always include Google News RSS as fallback (no API key needed)
         self.providers['google_rss'] = GoogleNewsRSSProvider()
+
+        # Always include Medium RSS (no API key, specialized content)
+        self.providers['medium'] = MediumRSSProvider()
         
         # Provider priority order
         self.provider_priority = settings.NEWS_PROVIDER_PRIORITY
@@ -102,6 +108,19 @@ class NewsAggregator:
         # If all providers failed, return empty list
         print(f"😞 [NEWS AGGREGATOR] All providers exhausted for '{category}' - no articles available")
         return []
+
+    async def fetch_from_provider(self, provider_name: str, category: str) -> List[Article]:
+        """Fetch news specifically from a named provider (bypassing priority/failover)"""
+        provider = self.providers.get(provider_name)
+        if not provider or not provider.is_available():
+            return []
+        
+        try:
+            # print(f"📡 [{provider_name.upper()}] Fetching specific '{category}' news...")
+            return await provider.fetch_news(category)
+        except Exception as e:
+            print(f"❌ [{provider_name.upper()}] Specific fetch error: {e}")
+            return []
     
     async def fetch_rss(self, provider: str) -> List[Article]:
         """Fetch RSS from cloud providers"""
