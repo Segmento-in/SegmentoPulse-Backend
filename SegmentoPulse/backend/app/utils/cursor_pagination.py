@@ -86,9 +86,18 @@ class CursorPagination:
         """
         from appwrite.query import Query
         
-        filters = [
-            Query.equal('category', category),
-        ]
+        filters = []
+        
+        # Special handling for Curated Articles (Medium/LinkedIn)
+        # These are stored with their original topic categories (e.g. 'ai') 
+        # but with a distinct 'source' field.
+        if category == 'medium-article':
+            filters.append(Query.equal('source', 'Medium'))
+        elif category == 'linkedin-article':
+            filters.append(Query.equal('source', 'LinkedIn'))
+        else:
+            # Standard category filter
+            filters.append(Query.equal('category', category))
         
         if cursor:
             cursor_data = CursorPagination.decode_cursor(cursor)
