@@ -8,6 +8,7 @@ Provides persistent storage for news articles with fast querying capability.
 # We're using v4.1.0 for stability, suppress warnings until we upgrade
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='appwrite')
+warnings.filterwarnings('ignore', message='Call to deprecated function') # Catch-all for Appwrite logs
 
 try:
     from appwrite.client import Client
