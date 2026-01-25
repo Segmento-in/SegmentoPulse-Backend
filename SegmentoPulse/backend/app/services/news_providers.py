@@ -119,7 +119,7 @@ class GNewsProvider(NewsProvider):
                     title=item.get('title', ''),
                     description=item.get('description', ''),
                     url=item.get('url', ''),
-                    image=item.get('image', ''),
+                    image=item.get('image') or '',
                     publishedAt=item.get('publishedAt', datetime.now().isoformat()),
                     source=item.get('source', {}).get('name', 'GNews'),
                     category=category
@@ -198,7 +198,7 @@ class NewsAPIProvider(NewsProvider):
                     title=item.get('title', ''),
                     description=item.get('description', ''),
                     url=item.get('url', ''),
-                    image=item.get('urlToImage', ''),
+                    image=item.get('urlToImage') or '',
                     publishedAt=item.get('publishedAt', datetime.now().isoformat()),
                     source=item.get('source', {}).get('name', 'NewsAPI'),
                     category=category
@@ -284,7 +284,7 @@ class NewsDataProvider(NewsProvider):
                     title=item.get('title', ''),
                     description=item.get('description', ''),
                     url=item.get('link', ''),
-                    image=item.get('image_url', ''),
+                    image=item.get('image_url') or '',
                     publishedAt=item.get('pubDate', datetime.now().isoformat()),
                     source=item.get('source_id', 'NewsData'),
                     category=category
@@ -413,7 +413,7 @@ class MediumRSSProvider(NewsProvider):
                     # Medium pub date format
                     publishedAt=self._parse_pub_date(entry.get('published')),
                     source="Medium",
-                    category=category,
+                    category="medium-article", # FORCE separation to prevent leakage
                     # author=author # Article model might not have author, check field
                 )
                 

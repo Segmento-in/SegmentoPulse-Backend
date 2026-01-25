@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "https://segmento.in"
     
     # Appwrite Database (Phase 2)
-    APPWRITE_ENDPOINT: str = "https://cloud.appwrite.io/v1"
+    APPWRITE_ENDPOINT: str = "https://nyc.cloud.appwrite.io/v1"
     APPWRITE_PROJECT_ID: str = ""
     APPWRITE_API_KEY: str = ""
     APPWRITE_DATABASE_ID: str = "segmento_db"

@@ -7,6 +7,7 @@ Provides persistent storage for news articles with fast querying capability.
 # NOTE: list_documents() is deprecated but new API (tablesDB.list_rows) requires SDK v6+
 # We're using v4.1.0 for stability, suppress warnings until we upgrade
 import warnings
+import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='appwrite')
 warnings.filterwarnings('ignore', message='Call to deprecated function') # Catch-all for Appwrite logs
 
