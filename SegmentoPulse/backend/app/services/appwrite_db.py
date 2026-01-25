@@ -61,20 +61,26 @@ class AppwriteDatabase:
             
             self.initialized = True
             print("")
-            print("✓" * 80)
-            print("✅ [Appwrite] Database initialized successfully!")
-            print(f"📊 Database ID: {settings.APPWRITE_DATABASE_ID}")
-            print(f"📋 Collection ID: {settings.APPWRITE_COLLECTION_ID}")
-            print("✓" * 80)
+            self.initialized = True
+            print("")
+            print("-" * 80)
+            print("[Appwrite] Database initialized successfully!")
+            print(f"Database ID: {settings.APPWRITE_DATABASE_ID}")
+            print(f"Collection ID: {settings.APPWRITE_COLLECTION_ID}")
+            print("-" * 80)
+            print("")
             print("")
             
         except Exception as e:
             print("")
-            print("✗" * 80)
-            print("❌ [Appwrite] Initialization FAILED!")
-            print(f"⚠️  Error: {e}")
-            print("💡 Please check your Appwrite credentials in .env file")
-            print("✗" * 80)
+        except Exception as e:
+            print("")
+            print("!" * 80)
+            print("[Appwrite] Initialization FAILED!")
+            print(f"[ERROR] Error: {e}")
+            print("[INFO] Please check your Appwrite credentials in .env file")
+            print("!" * 80)
+            print("")
             print("")
             self.initialized = False
     
@@ -170,7 +176,7 @@ class AppwriteDatabase:
                     continue
             
             if articles:
-                print(f"✓ Retrieved {len(articles)} articles for '{category}' (offset: {offset}, projection: ON)")
+                print(f"[SUCCESS] Retrieved {len(articles)} articles for '{category}' (offset: {offset}, projection: ON)")
             
             return articles
             
@@ -333,7 +339,7 @@ class AppwriteDatabase:
                 error_count += 1
         
         if saved_count > 0 or duplicate_count > 0:
-            print(f"✓ Parallel write: {saved_count} saved, {duplicate_count} duplicates, {error_count} errors")
+            print(f"[WRITE] Parallel write: {saved_count} saved, {duplicate_count} duplicates, {error_count} errors")
         
         return saved_count
     
@@ -376,9 +382,9 @@ class AppwriteDatabase:
                     print(f"Error deleting document {doc['$id']}: {e}")
             
             if deleted_count > 0:
-                print(f"✅ [Appwrite] Deleted {deleted_count} articles older than {days} days")
+                print(f"[CLEANUP] Deleted {deleted_count} articles older than {days} days")
             else:
-                print(f"📋 [Appwrite] No old articles to delete")
+                print(f"[CLEANUP] No old articles to delete")
             
             return deleted_count
             

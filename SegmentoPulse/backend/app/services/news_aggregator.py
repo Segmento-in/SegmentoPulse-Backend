@@ -79,12 +79,12 @@ class NewsAggregator:
             
             # Skip if provider is not available (rate limited)
             if not provider.is_available():
-                print(f"⏭️  [{provider_name.upper()}] Not available (rate limited), trying next...")
+                print(f"[SKIP] [{provider_name.upper()}] Not available (rate limited), trying next...")
                 self.stats['failover_count'] += 1
                 continue
             
             try:
-                print(f"📡 [{provider_name.upper()}] Attempting to fetch '{category}' news...")
+                print(f"[FETCH] [{provider_name.upper()}] Attempting to fetch '{category}' news...")
                 articles = await provider.fetch_news(category, limit=20)
                 
                 # If we got articles, return them
@@ -98,15 +98,15 @@ class NewsAggregator:
                     
                     return articles
                 else:
-                    print(f"⏭️  [{provider_name.upper()}] No articles returned, trying next provider...")
+                    print(f"[SKIP] [{provider_name.upper()}] No articles returned, trying next provider...")
                     
             except Exception as e:
-                print(f"❌ [{provider_name.upper()}] Error: {e}, trying next...")
+                print(f"[ERROR] [{provider_name.upper()}] Error: {e}, trying next...")
                 self.stats['failover_count'] += 1
                 continue
         
         # If all providers failed, return empty list
-        print(f"😞 [NEWS AGGREGATOR] All providers exhausted for '{category}' - no articles available")
+        print(f"[WARN] [NEWS AGGREGATOR] All providers exhausted for '{category}' - no articles available")
         return []
 
     async def fetch_from_provider(self, provider_name: str, category: str) -> List[Article]:
@@ -119,7 +119,7 @@ class NewsAggregator:
             # print(f"📡 [{provider_name.upper()}] Fetching specific '{category}' news...")
             return await provider.fetch_news(category)
         except Exception as e:
-            print(f"❌ [{provider_name.upper()}] Specific fetch error: {e}")
+            print(f"[ERROR] [{provider_name.upper()}] Specific fetch error: {e}")
             return []
     
     async def fetch_rss(self, provider: str) -> List[Article]:

@@ -36,7 +36,8 @@ CATEGORIES = [
     "customer-data-platform",
     "data-centers",
     "cloud-computing",
-    "magazines"
+    "magazines",
+    "data-laws"
 ]
 
 
