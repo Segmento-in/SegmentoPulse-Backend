@@ -10,7 +10,8 @@ from app.services.news_providers import (
     NewsDataProvider, 
     NewsDataProvider, 
     GoogleNewsRSSProvider,
-    MediumRSSProvider
+    MediumRSSProvider,
+    OfficialCloudProvider
 )
 from app.config import settings
 
@@ -41,6 +42,9 @@ class NewsAggregator:
 
         # Always include Medium RSS (no API key, specialized content)
         self.providers['medium'] = MediumRSSProvider()
+        
+        # Official Cloud Provider (Strict Isolation)
+        self.providers['official_cloud'] = OfficialCloudProvider()
         
         # Provider priority order
         self.provider_priority = settings.NEWS_PROVIDER_PRIORITY

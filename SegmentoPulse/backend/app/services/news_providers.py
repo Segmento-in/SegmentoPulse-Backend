@@ -471,3 +471,74 @@ class MediumRSSProvider(NewsProvider):
         except:
             return datetime.now().isoformat()
 
+
+class OfficialCloudProvider(NewsProvider):
+    """
+    Official Cloud Provider RSS
+    Strictly maps categories to specific official blogs.
+    Prevents cross-contamination (AWS news only in cloud-aws).
+    """
+    
+    def __init__(self):
+        super().__init__(None)
+        self.daily_limit = 0
+        
+        # Strict mapping: Category -> RSS URL
+        self.provider_map = {
+            'cloud-aws': 'https://aws.amazon.com/blogs/aws/feed/',
+            'cloud-azure': 'https://azure.microsoft.com/en-us/blog/feed/',
+            'cloud-google': 'https://cloudblog.withgoogle.com/rss/', # Legacy mapping if needed
+            'cloud-gcp': 'https://cloudblog.withgoogle.com/rss/',
+            'cloud-oracle': 'https://blogs.oracle.com/cloud-infrastructure/rss',
+            'cloud-ibm': 'https://www.ibm.com/blog/rss',
+            'cloud-alibaba': 'https://www.alibabacloud.com/blog/feed',
+            'cloud-digitalocean': 'https://www.digitalocean.com/blog/rss.xml',
+            'cloud-cloudflare': 'https://blog.cloudflare.com/rss/',
+            'cloud-huawei': 'https://blog.huawei.com/feed/', # Generic Huawei blog often used
+        }
+
+    async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:
+        """Fetch news specifically for the requested category"""
+        rss_url = self.provider_map.get(category)
+        
+        # STRICT ISOLATION: If this category isn't in our map, return nothing.
+        # This ensures we don't accidentally fetch 'cloud-computing' generic news here.
+        if not rss_url:
+            return []
+            
+        try:
+            # Use RSSParser's logic but force our strict category
+            from app.services.rss_parser import RSSParser
+            parser = RSSParser()
+            
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(rss_url, follow_redirects=True)
+                
+                if response.status_code == 200:
+                    # Parse using the generic provider parser
+                    # We pass the category name as the 'provider' argument to some degree
+                    # but we mostly care about the content.
+                    # RssParser.parse_provider_rss uses 'provider' arg for source name and partial category.
+                    # Let's extract provider name from category (cloud-aws -> AWS)
+                    provider_name = category.replace('cloud-', '').upper()
+                    
+                    # We accept the articles, but we MUST override the category to strict match
+                    raw_articles = await parser.parse_provider_rss(response.text, provider_name)
+                    
+                    final_articles = []
+                    for art in raw_articles:
+                        # FORCE OVERRIDE
+                        art.category = category 
+                        art.source = f"Official {provider_name} Blog"
+                        final_articles.append(art)
+                        
+                    print(f"[SUCCESS] [OfficialCloud] Fetched {len(final_articles)} for {category}")
+                    return final_articles
+                else:
+                    print(f"[ERROR] [OfficialCloud] HTTP {response.status_code} for {category}")
+                    return []
+                    
+        except Exception as e:
+            print(f"[ERROR] [OfficialCloud] Failed {category}: {e}")
+            return []
+

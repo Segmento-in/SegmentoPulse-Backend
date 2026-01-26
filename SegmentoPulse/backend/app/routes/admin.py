@@ -20,7 +20,17 @@ CATEGORIES = [
     "data-centers",
     "cloud-computing",
     "magazines",
-    "data-laws"
+    "data-laws",
+    # Official Cloud Categories
+    "cloud-aws",
+    "cloud-azure",
+    "cloud-gcp",
+    "cloud-oracle",
+    "cloud-ibm",
+    "cloud-alibaba",
+    "cloud-digitalocean",
+    "cloud-huawei",
+    "cloud-cloudflare"
 ]
 
 @router.post("/cache/warm")

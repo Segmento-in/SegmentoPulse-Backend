@@ -37,7 +37,17 @@ CATEGORIES = [
     "data-centers",
     "cloud-computing",
     "magazines",
-    "data-laws"
+    "data-laws",
+    # Official Cloud Categories
+    "cloud-aws",
+    "cloud-azure",
+    "cloud-gcp",
+    "cloud-oracle",
+    "cloud-ibm",
+    "cloud-alibaba",
+    "cloud-digitalocean",
+    "cloud-huawei",
+    "cloud-cloudflare"
 ]
 
 
@@ -202,12 +212,13 @@ async def fetch_and_validate_category(category: str) -> tuple:
         # Fetch from external APIs
         news_aggregator = NewsAggregator()
         
-        # FAANG Optimization: Concurrent fetch from Main Provider Chain + Medium
-        # This ensures we get high-quality API news AND Medium blogs simultaneously
+        # FAANG Optimization: Concurrent fetch from Main Provider Chain + Medium + Official Cloud
+        # This ensures we get high-quality API news AND Medium blogs AND Official source simultaneously
         main_task = news_aggregator.fetch_by_category(category)
         medium_task = news_aggregator.fetch_from_provider('medium', category)
+        official_task = news_aggregator.fetch_from_provider('official_cloud', category)
         
-        results = await asyncio.gather(main_task, medium_task, return_exceptions=True)
+        results = await asyncio.gather(main_task, medium_task, official_task, return_exceptions=True)
         
         # Combine results
         raw_articles = []
@@ -221,6 +232,12 @@ async def fetch_and_validate_category(category: str) -> tuple:
             if results[1]: # Only log if we found Medium articles
                 logger.info("   + Found %d Medium articles for %s", len(results[1]), category)
             raw_articles.extend(results[1])
+
+        # Result 2: Official Cloud
+        if isinstance(results[2], list):
+            if results[2]:
+                logger.info("   + Found %d Official Cloud articles for %s", len(results[2]), category)
+            raw_articles.extend(results[2])
         
         if not raw_articles:
             return (category, [], 0, 0)
