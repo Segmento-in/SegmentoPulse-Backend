@@ -38,7 +38,7 @@ apscheduler==3.10.4
 appwrite==14.1.0
 
 # Agentic AI Upgrade (Specific versions to fix pip backtracking)
-chromadb==0.5.0
+chromadb==1.4.1
 crewai==0.35.0
 langchain-groq==0.1.6
 sentence-transformers==3.0.1
