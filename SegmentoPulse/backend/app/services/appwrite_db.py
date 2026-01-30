@@ -247,7 +247,7 @@ class AppwriteDatabase:
             articles: List of article dicts (already sanitized and validated)
         
         Returns:
-            Number of articles successfully saved (excluding duplicates)
+            Tuple[int, List[Dict]]: (count of saved articles, list of saved article data)
         """
         if not self.initialized:
             return 0
@@ -324,6 +324,7 @@ class AppwriteDatabase:
         
         # Count results
         saved_count = 0
+        saved_documents = []
         duplicate_count = 0
         error_count = 0
         
@@ -335,6 +336,7 @@ class AppwriteDatabase:
             status, data = result
             if status == 'success':
                 saved_count += 1
+                saved_documents.append(data)
             elif status == 'duplicate':
                 duplicate_count += 1
             else:  # error
@@ -343,7 +345,7 @@ class AppwriteDatabase:
         if saved_count > 0 or duplicate_count > 0:
             print(f"[WRITE] Parallel write: {saved_count} saved, {duplicate_count} duplicates, {error_count} errors")
         
-        return saved_count
+        return saved_count, saved_documents
     
     async def delete_old_articles(self, days: int = 30) -> int:
         """

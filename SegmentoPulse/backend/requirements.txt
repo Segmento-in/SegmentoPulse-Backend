@@ -37,3 +37,9 @@ apscheduler==3.10.4
 
 appwrite==14.1.0
 
+# Agentic AI Upgrade
+chromadb
+crewai
+langchain-groq
+sentence-transformers
+

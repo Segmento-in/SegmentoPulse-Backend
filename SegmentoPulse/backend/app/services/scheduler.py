@@ -14,6 +14,7 @@ from app.services.news_aggregator import NewsAggregator
 from app.services.appwrite_db import get_appwrite_db
 from app.services.cache_service import CacheService
 from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
+from app.services.agent_orchestrator import process_shadow_path
 from app.config import settings
 
 # Setup logging
@@ -115,7 +116,13 @@ async def fetch_all_news():
         try:
             # Save to Appwrite database (L2)
             logger.info("💾 Saving %d articles for %s...", len(articles), category.upper())
-            saved_count = await appwrite_db.save_articles(articles)
+            saved_count, saved_docs = await appwrite_db.save_articles(articles)
+
+            # 🚀 FIRE-AND-FORGET: Trigger Agentic Shadow Path
+            # We do NOT wait for this. It runs in the background.
+            if saved_docs:
+                logger.info("🕵️ Triggering Agent Analyst for %d new articles...", len(saved_docs))
+                asyncio.create_task(process_shadow_path(saved_docs))
             
             # Calculate duplicates
             duplicates = len(articles) - saved_count
