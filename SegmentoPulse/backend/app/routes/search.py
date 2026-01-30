@@ -28,7 +28,7 @@ async def search_news(q: str = Query(..., min_length=2, description="Search quer
         
         # 1. Semantic Search (Agentic RAG)
         # We try to get "smart" results first
-        from app.services.agent_orchestrator import _vector_store
+        from app.services.vector_store import vector_store as _vector_store
         semantic_articles = _vector_store.search_articles(q, limit=10)
         
         # 2. Keyword Search (Aggregator Fallback/Augmentation)
