@@ -24,17 +24,46 @@ async def search_news(q: str = Query(..., min_length=2, description="Search quer
                 articles=cached_data
             )
         
-        # Search articles
-        articles = await news_aggregator.search(q)
+        # Strategy: Hybrid Search (Semantic -> Keyword)
+        
+        # 1. Semantic Search (Agentic RAG)
+        # We try to get "smart" results first
+        from app.services.agent_orchestrator import _vector_store
+        semantic_articles = _vector_store.search_articles(q, limit=10)
+        
+        # 2. Keyword Search (Aggregator Fallback/Augmentation)
+        # We always fetch some keyword results too, to ensure we don't miss exact matches
+        # or if Vector DB is empty/cold.
+        keyword_articles = await news_aggregator.search(q)
+        
+        # 3. Merge Strategies
+        # Create a dict by URL to deduplicate
+        merged_map = {}
+        
+        # Add Semantic results first (Higher priority?) 
+        # Actually, let's prioritize them but ensure unique valid URLs
+        for art in semantic_articles:
+            if art.get('url'):
+                merged_map[art['url']] = art
+                
+        # Add Keyword results (Only if not already present)
+        for art in keyword_articles:
+            if art.get('url') and art['url'] not in merged_map:
+                merged_map[art['url']] = art
+                
+        # Convert back to list
+        final_articles = list(merged_map.values())
+        
+        # If we have NO results, that's fine
         
         # Cache results
-        await cache_service.set(cache_key, articles, ttl=300)  # 5 min cache for searches
+        await cache_service.set(cache_key, final_articles, ttl=300)
         
         return SearchResponse(
             success=True,
             query=q,
-            count=len(articles),
-            articles=articles
+            count=len(final_articles),
+            articles=final_articles
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

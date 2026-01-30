@@ -84,7 +84,10 @@ class VectorStore:
                 "source": article_data.get('source', 'Unknown'),
                 "category": article_data.get('category', 'General'),
                 "published_at": str(article_data.get('published_at', '')),
-                "url": article_data.get('url', '')
+                "url": article_data.get('url', ''),
+                "title": article_data.get('title', ''),                     # NEW: Store for search retrieval
+                "description": article_data.get('description', ''),         # NEW: Store for search retrieval
+                "image": article_data.get('image', '')                      # NEW: Store for search retrieval
             }
             
             # Upsert to ChromaDB
@@ -105,6 +108,67 @@ class VectorStore:
             
         except Exception as e:
             logger.error("❌ [ChromaDB] Upsert failed: %s", e)
+
+    def search_articles(self, query: str, limit: int = 10) -> List[Dict]:
+        """
+        Semantic Search: Find articles conceptually similar to the query.
+        Returns a list of articles in the format expected by the frontend.
+        """
+        if not self._initialized:
+            self._initialize()
+            
+        if not self._initialized or not self.collection:
+            return []
+
+        try:
+            # Generate embedding for query
+            query_embedding = self.embedder.encode(query).tolist()
+            
+            # Query ChromaDB
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=limit
+            )
+            
+            if not results['ids'] or not results['ids'][0]:
+                return []
+                
+            # Parse results into list of dicts
+            articles = []
+            
+            # Chroma returns list of lists (one per query)
+            ids = results['ids'][0]
+            metadatas = results['metadatas'][0]
+            distances = results['distances'][0]
+            
+            for i, doc_id in enumerate(ids):
+                meta = metadatas[i]
+                
+                # Filter out low relevance (distance > 1.5 roughly implies low similarity for Cosine)
+                # Lower distance = better match
+                if distances[i] > 1.2: 
+                    continue
+                    
+                article = {
+                    "$id": doc_id,
+                    "title": meta.get("title", "Untitled"),
+                    "description": meta.get("description", ""),
+                    "url": meta.get("url", "#"),
+                    "source": meta.get("source", "Segmento AI"),
+                    "publishedAt": meta.get("published_at", ""),
+                    "image": meta.get("image", "/placeholder.png"),
+                    "category": meta.get("category", "General"),
+                    # Add relevance score for debugging?
+                    "_relevance": round(1 - distances[i], 2) # Crude approximation
+                }
+                articles.append(article)
+                
+            logger.info("🧠 [ChromaDB] Search '%s' found %d semantic matches", query, len(articles))
+            return articles
+            
+        except Exception as e:
+            logger.error("❌ [ChromaDB] Search failed: %s", e)
+            return []
 
 
 class PulseAnalyst:
