@@ -47,7 +47,10 @@ class VectorStore:
             self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
             
             self._initialized = True
+            # Retrieve collection count for observability
+            count = self.collection.count()
             logger.info("✅ [ChromaDB] Vector Store initialized successfully at %s", db_path)
+            logger.info("📊 [ChromaDB Observability] Current Vector Count: %d", count)
             
         except Exception as e:
             logger.error("❌ [ChromaDB] Initialization failed: %s", e)
@@ -67,6 +70,10 @@ class VectorStore:
             # Prepare text for embedding: Title + Summary + Analysis
             # We treat the "analysis" as high-value semantic content
             combined_text = f"{article_data.get('title', '')} \n {article_data.get('description', '')} \n {analysis_result}"
+            
+            # Observability: Log what we are embedding
+            logger.info("📝 [Index] Embedding Article: '%s'", article_data.get('title', '')[:50])
+            logger.info("   -> Content Length: %d chars", len(combined_text))
             
             # Generate embedding
             embedding = self.embedder.encode(combined_text).tolist()
@@ -158,9 +165,25 @@ class VectorStore:
             logger.info("🧠 [ChromaDB] Search '%s' found %d semantic matches", query, len(articles))
             return articles
             
-        except Exception as e:
             logger.error("❌ [ChromaDB] Search failed: %s", e)
             return []
+
+    def delete_vector(self, doc_id: str):
+        """
+        Remove a vector from ChromaDB by ID.
+        Used by the cleanup janitor to prevent 'Zombie Vectors'.
+        """
+        if not self._initialized:
+            self._initialize()
+            
+        if not self._initialized or not self.collection:
+            return
+
+        try:
+            self.collection.delete(ids=[doc_id])
+            logger.info("🗑️  [ChromaDB] Deleted vector: %s", doc_id)
+        except Exception as e:
+            logger.error("❌ [ChromaDB] Delete failed for %s: %s", doc_id, e)
 
 # Singleton Instance
 vector_store = VectorStore()

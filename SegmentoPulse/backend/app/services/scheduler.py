@@ -15,6 +15,7 @@ from app.services.appwrite_db import get_appwrite_db
 from app.services.cache_service import CacheService
 from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
 from app.services.agent_orchestrator import process_shadow_path
+from app.services.vector_store import vector_store # For cleanup
 from app.config import settings
 
 # Setup logging
@@ -341,6 +342,13 @@ async def cleanup_old_news():
                     collection_id=settings.APPWRITE_COLLECTION_ID,
                     document_id=doc['$id']
                 )
+                
+                # Cleanup from ChromaDB as well (Prevent Zombies)
+                try:
+                    vector_store.delete_vector(doc['$id'])
+                except Exception as ve:
+                    logger.warning("⚠️  Vector delete failed (non-critical): %s", ve)
+                
                 deleted_count += 1
                 if deleted_count % 10 == 0:
                     logger.info("   Progress: %d articles deleted...", deleted_count)
@@ -407,9 +415,9 @@ def start_scheduler():
     # Job 2: Cleanup old news every 2 hours
     scheduler.add_job(
         cleanup_old_news,
-        trigger=IntervalTrigger(hours=2),  # Every 2 hours
+        trigger=IntervalTrigger(minutes=30),  # Every 30 mins
         id='cleanup_old_news',
-        name='Database Janitor (every 2 hours)',
+        name='Database Janitor (every 30 mins)',
         replace_existing=True
     )
     logger.info("")

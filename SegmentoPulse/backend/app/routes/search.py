@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException, Query
 from app.models import SearchResponse
 from app.services.news_aggregator import NewsAggregator
 from app.services.cache_service import CacheService
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 news_aggregator = NewsAggregator()
@@ -40,11 +43,16 @@ async def search_news(q: str = Query(..., min_length=2, description="Search quer
         # Create a dict by URL to deduplicate
         merged_map = {}
         
+        # Stats for observability
+        semantic_count = 0
+        keyword_count = len(keyword_articles)
+        
         # Add Semantic results first (Higher priority?) 
         # Actually, let's prioritize them but ensure unique valid URLs
         for art in semantic_articles:
             if art.get('url'):
                 merged_map[art['url']] = art
+                semantic_count += 1
                 
         # Add Keyword results (Only if not already present)
         for art in keyword_articles:
@@ -53,6 +61,15 @@ async def search_news(q: str = Query(..., min_length=2, description="Search quer
                 
         # Convert back to list
         final_articles = list(merged_map.values())
+        
+        # Observability: Log Search Performance
+        import time
+        end_time = time.time()
+        # We assume start_time could be added at top of function, but for now we just log counts
+        logger.info("🔎 [Search] Query: '%s' | Total: %d", q, len(final_articles))
+        logger.info("   -> 🧠 Vector Matches: %d", semantic_count)
+        logger.info("   -> 🔑 Keyword Matches: %d", keyword_count)
+        logger.info("   -> 🔗 Valid Merged: %d", len(final_articles))
         
         # If we have NO results, that's fine
         

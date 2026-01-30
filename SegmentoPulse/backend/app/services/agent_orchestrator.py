@@ -51,7 +51,7 @@ class PulseAnalyst:
             self.llm = ChatGroq(
                 temperature=0,
                 groq_api_key=api_key,
-                model_name="llama3-8b-8192"
+                model_name="llama-3.1-8b-instant"
             )
             
             # Define the Analyst Agent
@@ -145,6 +145,10 @@ async def process_shadow_path(articles: List[Dict]):
                 # 1. Analyze (Agent)
                 logger.debug("   ...Analyzing: %s", article.get('title')[:20])
                 analysis = await _pulse_analyst.analyze(article)
+                
+                # Observability: Log Agent Output
+                logger.info("🤖 [Agent Analysis] Article: '%s'", article.get('title', '')[:30])
+                logger.info("   -> Generated %d chars of insight", len(analysis))
                 
                 # 2. Embed & Save (VectorStore)
                 # Note: upsert_article might block if it does heavy CPU work? 
