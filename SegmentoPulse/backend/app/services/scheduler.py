@@ -289,7 +289,7 @@ async def cleanup_old_news():
     """
     Background Job: Delete articles older than 48 hours (Data Retention Policy)
     
-    Runs daily at midnight to keep Appwrite database within free tier limits.
+    Runs every 30 minutes to keep Appwrite database within free tier limits.
     Only keeps the last 2 days of articles.
     """
     logger.info("")
@@ -412,7 +412,7 @@ def start_scheduler():
     logger.info("   ⏱️  Schedule: Every 15 minutes")
     logger.info("   📋 Task: Fetch news from all providers and update database")
     
-    # Job 2: Cleanup old news every 2 hours
+    # Job 2: Cleanup old news every 30 minutes
     scheduler.add_job(
         cleanup_old_news,
         trigger=IntervalTrigger(minutes=30),  # Every 30 mins
@@ -422,7 +422,7 @@ def start_scheduler():
     )
     logger.info("")
     logger.info("✅ Job #2 Registered: 🧹 Database Janitor")
-    logger.info("   ⏱️  Schedule: Every 2 hours")
+    logger.info("   ⏱️  Schedule: Every 30 minutes")
     logger.info("   📋 Task: Delete articles older than 48 hours (up to 500 per run)")
     logger.info("   🔢 Total cleanup capacity: 6,000 articles/day (12 runs × 500)")
     

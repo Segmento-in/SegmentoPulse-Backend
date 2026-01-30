@@ -10,7 +10,7 @@ This module is responsible for:
 
 import asyncio
 import logging
-import os
+import osG
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -21,8 +21,8 @@ from app.services.vector_store import vector_store as _vector_store
 logger = logging.getLogger(__name__)
 
 # Global Semaphore to control concurrency (prevent Rate Limits)
-# Only allow 5 concurrent AI analysis tasks at a time
-MAX_CONCURRENT_TASKS = 5
+# Reduced from 5 to 2 to stay within Groq's 6000 TPM limit
+MAX_CONCURRENT_TASKS = 2
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 
 class PulseAnalyst:
@@ -76,6 +76,7 @@ class PulseAnalyst:
     async def analyze(self, article_data: Dict) -> str:
         """
         Run the Agent on a single article.
+        Includes manual Retry/Backoff for Rate Limits.
         """
         if not self._initialized:
             self._initialize()
@@ -83,47 +84,61 @@ class PulseAnalyst:
         if not self._initialized:
             return article_data.get('description', '')
 
-        try:
-            from crewai import Task, Crew
-            
-            # Construct a prompt/task
-            title = article_data.get('title', '')
-            desc = article_data.get('description', '')
-            
-            task_description = f"""
-            Analyze this news article:
-            Title: {title}
-            Snippet: {desc}
-            
-            1. Summarize it in 2 sentences.
-            2. Extract 3 key technical tags (e.g., 'Kubernetes', 'Antitrust', 'LLMs').
-            3. Classify the sentiment (Positive/Neutral/Negative).
-            
-            Return ONLY the analysis text.
-            """
-            
-            task = Task(
-                description=task_description,
-                agent=self.agent,
-                expected_output="A concise summary with tags and sentiment."
-            )
-            
-            # CrewAI is synchronous, so we run it in a thread to be non-blocking
-            # This is crucial for the "Fire-and-Forget" pattern
-            crew = Crew(
-                agents=[self.agent],
-                tasks=[task],
-                verbose=False
-            )
-            
-            # Run blocking call in default executor
-            result = await asyncio.to_thread(crew.kickoff)
-            
-            return str(result)
-            
-        except Exception as e:
-            logger.error("❌ [PulseAnalyst] Analysis failed: %s", e)
-            return article_data.get('description', '')
+        retries = 3
+        delay = 2
+
+        for attempt in range(retries):
+            try:
+                from crewai import Task, Crew
+                
+                # Construct a prompt/task
+                title = article_data.get('title', '')
+                desc = article_data.get('description', '')
+                
+                task_description = f"""
+                Analyze this news article:
+                Title: {title}
+                Snippet: {desc}
+                
+                1. Summarize it in 2 sentences.
+                2. Extract 3 key technical tags (e.g., 'Kubernetes', 'Antitrust', 'LLMs').
+                3. Classify the sentiment (Positive/Neutral/Negative).
+                
+                Return ONLY the analysis text.
+                """
+                
+                task = Task(
+                    description=task_description,
+                    agent=self.agent,
+                    expected_output="A concise summary with tags and sentiment."
+                )
+                
+                # CrewAI is synchronous, so we run it in a thread to be non-blocking
+                # This is crucial for the "Fire-and-Forget" pattern
+                crew = Crew(
+                    agents=[self.agent],
+                    tasks=[task],
+                    verbose=False
+                )
+                
+                # Run blocking call in default executor
+                result = await asyncio.to_thread(crew.kickoff)
+                
+                return str(result)
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                if '429' in error_str or 'rate limit' in error_str:
+                    if attempt < retries - 1:
+                        logger.warning("⚠️ [PulseAnalyst] Rate Limit (429). Retrying in %ds...", delay)
+                        await asyncio.sleep(delay)
+                        delay *= 2 # Exponential backoff
+                        continue
+                
+                logger.error("❌ [PulseAnalyst] Analysis failed: %s", e)
+                return article_data.get('description', '')
+        
+        return article_data.get('description', '')
 
 
 # Singleton Instances

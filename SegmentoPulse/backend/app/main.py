@@ -3,6 +3,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.config import settings
 from app.routes import news, search, analytics, subscription, admin
+import warnings
+
+# Suppress Pydantic V2 warnings from LangChain (known upstream issue)
+try:
+    from pydantic.warnings import PydanticDeprecatedSince20
+    warnings.filterwarnings("ignore", category=PydanticDeprecatedSince20)
+except ImportError:
+    pass
+
+# Suppress specific Appwrite deprecation (tablesDB.create_row is not yet standard in Py SDK)
+warnings.filterwarnings("ignore", message=".*Call to deprecated function 'create_document'.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain_groq")
 
 # Import scheduler functions
 from app.services.scheduler import start_scheduler, shutdown_scheduler
