@@ -165,6 +165,7 @@ class VectorStore:
             logger.info("🧠 [ChromaDB] Search '%s' found %d semantic matches", query, len(articles))
             return articles
             
+        except Exception as e:
             logger.error("❌ [ChromaDB] Search failed: %s", e)
             return []
 
