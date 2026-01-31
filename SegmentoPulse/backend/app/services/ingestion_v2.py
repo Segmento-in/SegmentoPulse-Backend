@@ -16,8 +16,7 @@ from typing import List, Dict, Optional
 import logging
 
 from llama_index.core import Document
-from llama_index.readers.rss import RSSReader
-from llama_index.readers.web import SimpleWebPageReader
+from llama_index.core.readers import RSSReader, SimpleWebPageReader
 
 from app.models import Article
 from app.services.deduplication import get_url_filter
