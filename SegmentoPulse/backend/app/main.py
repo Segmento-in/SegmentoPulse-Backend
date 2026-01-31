@@ -13,7 +13,8 @@ except ImportError:
     pass
 
 # Suppress specific Appwrite deprecation (tablesDB.create_row is not yet standard in Py SDK)
-warnings.filterwarnings("ignore", message=".*Call to deprecated function 'create_document'.*")
+# Catch 'create_document', 'list_documents', etc.
+warnings.filterwarnings("ignore", message=".*Call to deprecated function.*")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain_groq")
 
 # Import scheduler functions

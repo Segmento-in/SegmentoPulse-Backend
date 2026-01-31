@@ -16,6 +16,7 @@ from app.services.cache_service import CacheService
 from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
 from app.services.agent_orchestrator import process_shadow_path
 from app.services.vector_store import vector_store # For cleanup
+from app.services.ingestion_v2 import fetch_latest_news as fetch_v2  # Phase 1: LlamaIndex + Bloom Filter
 from app.config import settings
 
 # Setup logging
@@ -285,6 +286,106 @@ async def fetch_and_validate_category(category: str) -> tuple:
         return (category, [], 0, 0)
 
 
+async def run_smart_ingestion():
+    """
+    Background Job: Smart Ingestion using LlamaIndex + Bloom Filter (Phase 1)
+    
+    This is the next-generation ingestion pipeline that replaces manual scraping
+    with production-grade LlamaIndex data loaders and adds URL deduplication
+    via Bloom Filter to prevent processing the same articles multiple times.
+    
+    Benefits over legacy fetch_all_news():
+    - Robust RSS parsing with LlamaIndex RSSReader
+    - Automatic URL deduplication (Bloom Filter)
+    - Cleaner code architecture (separation of concerns)
+    - Better error handling and logging
+    - Lower memory footprint
+    
+    Runs every 15 minutes alongside (or replaces) the old fetcher.
+    """
+    start_time = datetime.now()
+    
+    logger.info("═" * 80)
+    logger.info("🔮 [SMART INGESTION] Starting Phase 1 Pipeline...")
+    logger.info("🕐 Start Time: %s", start_time.strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("🚀 Mode: LlamaIndex + Bloom Filter")
+    logger.info("═" * 80)
+    
+    try:
+        # Fetch all categories using LlamaIndex
+        results = await fetch_v2(CATEGORIES)
+        
+        # Save to Appwrite database and update cache
+        appwrite_db = get_appwrite_db()
+        cache_service = CacheService()
+        
+        total_saved = 0
+        total_fetched = 0
+        total_errors = 0
+        
+        for category, articles in results.items():
+            if not articles:
+                logger.warning("⚠️  No articles for category: %s", category)
+                continue
+            
+            try:
+                total_fetched += len(articles)
+                
+                # Save to Appwrite database (L2)
+                logger.info("💾 Saving %d articles for %s...", len(articles), category.upper())
+                saved_count, saved_docs = await appwrite_db.save_articles(articles)
+                
+                # 🚀 FIRE-AND-FORGET: Trigger Agentic Shadow Path
+                if saved_docs:
+                    logger.info("🕵️ Triggering Agent Analyst for %d new articles...", len(saved_docs))
+                    asyncio.create_task(process_shadow_path(saved_docs))
+                
+                total_saved += saved_count
+                
+                # Update Redis cache (L1) if available
+                try:
+                    await cache_service.set(f"news:{category}", articles, ttl=settings.CACHE_TTL)
+                    logger.info("⚡ Redis cache updated for %s", category)
+                except Exception as e:
+                    logger.debug("⚠️  Redis unavailable: %s", e)
+                
+                logger.info("✅ %s: %d fetched, %d saved", 
+                           category.upper(), len(articles), saved_count)
+                           
+            except Exception as e:
+                total_errors += 1
+                logger.error("❌ Error saving %s: %s", category, str(e))
+        
+        # End-of-run report
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        logger.info("")
+        logger.info("═" * 80)
+        logger.info("🎉 [SMART INGESTION] RUN COMPLETED")
+        logger.info("═" * 80)
+        logger.info("📊 SUMMARY STATISTICS:")
+        logger.info("   🔹 Total Fetched: %d articles", total_fetched)
+        logger.info("   🔹 Total Saved (New): %d articles", total_saved)
+        logger.info("   🔹 Total Errors: %d categories", total_errors)
+        logger.info("   🔹 Categories Processed: %d/%d", len(results), len(CATEGORIES))
+        logger.info("")
+        logger.info("⏱️  PERFORMANCE:")
+        logger.info("   🔹 Start: %s", start_time.strftime('%H:%M:%S'))
+        logger.info("   🔹 End: %s", end_time.strftime('%H:%M:%S'))
+        logger.info("   🔹 Duration: %.2f seconds", duration)
+        logger.info("   🔹 Throughput: %.1f articles/second", total_fetched / duration if duration > 0 else 0)
+        logger.info("═" * 80)
+        
+    except Exception as e:
+        logger.error("")
+        logger.error("═" * 80)
+        logger.error("❌ [SMART INGESTION] FAILED!")
+        logger.error("Error: %s", str(e))
+        logger.error("═" * 80)
+        logger.exception("Full traceback:")
+
+
 async def cleanup_old_news():
     """
     Background Job: Delete articles older than 48 hours (Data Retention Policy)
@@ -400,17 +501,33 @@ def start_scheduler():
     logger.info("⏰ [SCHEDULER] Initializing background scheduler...")
     logger.info("═" * 80)
     
-    # Job 1: Fetch news every 15 minutes
+    # Job 1: Smart Ingestion - LlamaIndex + Bloom Filter (Phase 1)
+    # This replaces the old fetch_all_news() with improved architecture
     scheduler.add_job(
-        fetch_all_news,
+        run_smart_ingestion,
         trigger=IntervalTrigger(minutes=15),
-        id='fetch_all_news',
-        name='News Fetcher (every 15 min)',
+        id='smart_ingestion_v2',
+        name='Smart Ingestion - LlamaIndex + Bloom Filter (every 15 min)',
         replace_existing=True
     )
-    logger.info("✅ Job #1 Registered: 📰 News Fetcher")
+    logger.info("✅ Job #1 Registered: 🔮 Smart Ingestion (Phase 1)")
     logger.info("   ⏱️  Schedule: Every 15 minutes")
-    logger.info("   📋 Task: Fetch news from all providers and update database")
+    logger.info("   📋 Task: Fetch news using LlamaIndex with Bloom Filter deduplication")
+    logger.info("   🎯 Benefits: Robust parsing, URL deduplication, lower memory footprint")
+    
+    # Legacy Job (DISABLED): Old news fetcher
+    # Uncomment below to revert to old implementation if needed
+    # scheduler.add_job(
+    #     fetch_all_news,
+    #     trigger=IntervalTrigger(minutes=15),
+    #     id='fetch_all_news',
+    #     name='News Fetcher (every 15 min)',
+    #     replace_existing=True
+    # )
+    # logger.info("✅ Job #1 Registered: 📰 News Fetcher (Legacy)")
+    # logger.info("   ⏱️  Schedule: Every 15 minutes")
+    # logger.info("   📋 Task: Fetch news from all providers and update database")
+    
     
     # Job 2: Cleanup old news every 30 minutes
     scheduler.add_job(

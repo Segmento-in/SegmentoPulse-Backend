@@ -10,7 +10,7 @@ This module is responsible for:
 
 import asyncio
 import logging
-import osG
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
