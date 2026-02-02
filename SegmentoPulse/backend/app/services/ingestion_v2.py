@@ -15,15 +15,26 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import logging
 import feedparser
+import requests
+import hashlib
 
 # Custom Document class (replaces LlamaIndex)
 from app.services.document import Document, create_document_from_rss_entry
 from app.services.chunker import SentenceSplitter
 
-from app.models import Article
+from app.models import Article  
 from app.services.deduplication import get_url_filter
+from app.services.vector_store import vector_store
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Space B Configuration
+# ============================================================================
+
+SPACE_B_URL = "https://workwithshafisk-segmentopulse-backend.hf.space"
+SPACE_B_TIMEOUT = 30  # seconds (Llama-3 is slow on CPU)
 
 
 # RSS feed URLs for each category
@@ -294,6 +305,115 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
     url_filter.print_stats()
     
     return results
+
+
+# ============================================================================
+# Article Processing with Space B + ChromaDB
+# ============================================================================
+
+async def process_and_store_article(url: str, raw_text: str, category: str, title: str = "") -> Optional[Dict]:
+    """
+    Phase 2 CQRS: Offload processing to Space B, then store in ChromaDB
+    
+    Architecture:
+    1. Send raw_text to Space B's /process-article endpoint
+    2. Receive summary + tags from Space B
+    3. Generate embeddings locally using sentence-transformers
+    4. Store in ChromaDB
+    
+    Args:
+        url: Article URL (used as ID)
+        raw_text: Full article content
+        category: Article category
+        title: Article title (optional)
+        
+    Returns:
+        Dictionary with processing results or None on error
+    """
+    try:
+        logger.info(f"🏭 [SPACE A→B] Processing: {url[:60]}...")
+        
+        # -------------------------------------------------------------------------
+        # Step 1: Call Space B for summarization + entity extraction
+        # -------------------------------------------------------------------------
+        try:
+            response = requests.post(
+                f"{SPACE_B_URL}/process-article",
+                json={
+                    "text": raw_text[:5000],  # Limit to avoid token limits
+                    "max_tokens": 150,
+                    "temperature": 0.7,
+                    "entity_labels": ["Person", "Organization", "Location", "Technology", "Product", "Event"],
+                    "entity_threshold": 0.5
+                },
+                timeout=SPACE_B_TIMEOUT
+            )
+            
+            if response.status_code != 200:
+                logger.warning(f"⚠️  Space B returned {response.status_code}: {response.text[:200]}")
+                return None
+                
+            space_b_result = response.json()
+            summary = space_b_result.get("summary", "")
+            tags = space_b_result.get("tags", [])
+            
+            logger.info(f"✅ Space B processed: {len(summary)} char summary, {len(tags)} tags")
+            
+        except requests.exceptions.Timeout:
+            logger.warning(f"⏳ Space B timeout (cold start?): {url[:50]}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Space B connection error: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Space B processing error: {e}")
+            return None
+        
+        # -------------------------------------------------------------------------
+        # Step 2: Generate embeddings locally with sentence-transformers
+        # -------------------------------------------------------------------------
+        # ChromaDB vector_store has embedded model (all-MiniLM-L6-v2)
+        # We'll use the existing upsert_article method
+        
+        # -------------------------------------------------------------------------
+        # Step 3: Prepare article data for ChromaDB
+        # -------------------------------------------------------------------------
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        
+        article_data = {
+            "$id": url_hash,
+            "title": title or summary[:100],  # Use title if available, else first part of summary
+            "description": summary,
+            "url": url,
+            "source": "Segmento AI",
+            "category": category,
+            "published_at": datetime.now().isoformat(),
+            "image": "",  # No image for now
+            "tags": tags
+        }
+        
+        # -------------------------------------------------------------------------
+        # Step 4: Store in ChromaDB
+        # -------------------------------------------------------------------------
+        # Create combined text: Title + Summary + Tags (for richer embeddings)
+        tags_text = " ".join(tags) if tags else ""
+        combined_analysis = f"Summary: {summary}\nTags: {tags_text}"
+        
+        # Upsert to vector store (handles embedding generation internally)
+        vector_store.upsert_article(article_data, combined_analysis)
+        
+        logger.info(f"🧠 [ChromaDB] Stored: {title[:50] if title else url[:50]}")
+        
+        return {
+            "url": url,
+            "summary": summary,
+            "tags": tags,
+            "stored": True
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ [CQRS] Processing failed for {url}: {e}")
+        return None
 
 
 async def fetch_single_category(category: str) -> List[Article]:
