@@ -25,8 +25,10 @@ from app.services.chunker import SentenceSplitter
 from app.models import Article  
 from app.services.deduplication import get_url_filter
 from app.services.vector_store import vector_store
+from app.services.professional_logger import get_professional_logger, ingestion_stats
 
-logger = logging.getLogger(__name__)
+# Initialize professional logger
+logger = get_professional_logger(__name__)
 
 
 # ============================================================================
@@ -331,7 +333,7 @@ async def process_and_store_article(url: str, raw_text: str, category: str, titl
         Dictionary with processing results or None on error
     """
     try:
-        logger.info(f"🏭 [SPACE A→B] Processing: {url[:60]}...")
+        logger.space_b_call(url, "started")
         
         # -------------------------------------------------------------------------
         # Step 1: Call Space B for summarization + entity extraction
@@ -350,23 +352,28 @@ async def process_and_store_article(url: str, raw_text: str, category: str, titl
             )
             
             if response.status_code != 200:
-                logger.warning(f"⚠️  Space B returned {response.status_code}: {response.text[:200]}")
+                logger.space_b_call(url, "failure")
+                logger.warning(f"Space B returned {response.status_code}: {response.text[:200]}")
                 return None
                 
             space_b_result = response.json()
             summary = space_b_result.get("summary", "")
             tags = space_b_result.get("tags", [])
             
-            logger.info(f"✅ Space B processed: {len(summary)} char summary, {len(tags)} tags")
+            logger.space_b_call(url, "success")
+            logger.metric("Summary Length", f"{len(summary)} chars", "📝")
+            logger.metric("Tags Extracted", len(tags), "🏷️")
             
         except requests.exceptions.Timeout:
-            logger.warning(f"⏳ Space B timeout (cold start?): {url[:50]}")
+            logger.space_b_call(url, "timeout")
             return None
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Space B connection error: {e}")
+            logger.space_b_call(url, "failure")
+            logger.error(f"Space B connection error: {e}")
             return None
         except Exception as e:
-            logger.error(f"❌ Space B processing error: {e}")
+            logger.space_b_call(url, "failure")
+            logger.error(f"Space B processing error: {e}")
             return None
         
         # -------------------------------------------------------------------------
@@ -401,8 +408,10 @@ async def process_and_store_article(url: str, raw_text: str, category: str, titl
         
         # Upsert to vector store (handles embedding generation internally)
         vector_store.upsert_article(article_data, combined_analysis)
+        ingestion_stats.chromadb_upserts += 1
+        ingestion_stats.articles_saved += 1
         
-        logger.info(f"🧠 [ChromaDB] Stored: {title[:50] if title else url[:50]}")
+        logger.success(f"ChromaDB stored: {title[:50] if title else url[:50]}")
         
         return {
             "url": url,
@@ -412,7 +421,7 @@ async def process_and_store_article(url: str, raw_text: str, category: str, titl
         }
         
     except Exception as e:
-        logger.error(f"❌ [CQRS] Processing failed for {url}: {e}")
+        logger.error(f"[CQRS] Processing failed for {url}: {e}")
         return None
 
 
