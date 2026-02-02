@@ -58,7 +58,14 @@ class VectorStore:
 
     def upsert_article(self, article_data: Dict, analysis_result: str):
         """
-        Convert article + analysis into vector and save to ChromaDB.
+        Phase 3: Enhanced vector storage with rich metadata
+        
+        Converts article + AI analysis into searchable vector with:
+        - Optimized embedding format: "{Title} : {Summary}"
+        - Cloud news detection
+        - Engagement metrics (likes, views)
+        - Time-aware sorting (Unix timestamp)
+        - Tag-based filtering (GLiNER output)
         """
         if not self._initialized:
             self._initialize()
@@ -67,46 +74,90 @@ class VectorStore:
             return
 
         try:
-            # Prepare text for embedding: Title + Summary + Analysis
-            # We treat the "analysis" as high-value semantic content
-            combined_text = f"{article_data.get('title', '')} \n {article_data.get('description', '')} \n {analysis_result}"
+            # Import HTML stripping utility
+            from app.utils import strip_html_if_needed
+            import time
+            
+            # Clean text (only strips if HTML detected)
+            title_clean = strip_html_if_needed(article_data.get('title', ''))
+            desc_clean = strip_html_if_needed(article_data.get('description', ''))
+            
+            # Phase 3: Optimized Combined Embedding
+            # Format: "{Title} : {Summary}"
+            # The colon separator helps the model distinguish title from body
+            text_to_embed = f"{title_clean} : {analysis_result}"
             
             # Observability: Log what we are embedding
-            logger.info("📝 [Index] Embedding Article: '%s'", article_data.get('title', '')[:50])
-            logger.info("   -> Content Length: %d chars", len(combined_text))
+            logger.info("📝 [Index] Embedding Article: '%s'", title_clean[:50])
+            logger.info("   -> Format: '{Title} : {Summary}'")
+            logger.info("   -> Total Length: %d chars", len(text_to_embed))
             
             # Generate embedding
-            embedding = self.embedder.encode(combined_text).tolist()
+            embedding = self.embedder.encode(text_to_embed).tolist()
             
-            # Metadata for filtering
+            # Phase 3: Enhanced Metadata Schema
             metadata = {
+                # Core identification
                 "source": article_data.get('source', 'Unknown'),
                 "category": article_data.get('category', 'General'),
-                "published_at": str(article_data.get('published_at', '')),
                 "url": article_data.get('url', ''),
-                "title": article_data.get('title', ''),                     # NEW: Store for search retrieval
-                "description": article_data.get('description', ''),         # NEW: Store for search retrieval
-                "image": article_data.get('image', '')                      # NEW: Store for search retrieval
+                
+                # Display data (cleaned)
+                "title": title_clean,
+                "description": desc_clean,
+                "image": article_data.get('image', ''),
+                
+                # Phase 3: Filtering & Search
+                "tags": article_data.get('tags', ''),  # GLiNER output (comma-separated)
+                
+                # Phase 3: Time-aware ranking
+                "timestamp": int(time.time()),  # Unix timestamp (numeric, sortable)
+                "published_at": str(article_data.get('published_at', '')),  # ISO string
+                
+                # Phase 3: Future features
+                "audio_url": "",  # Placeholder for TTS
+                
+                # Phase 3: Cloud detection
+                "is_cloud_news": article_data.get('is_cloud_news', False),
+                "cloud_provider": article_data.get('cloud_provider', ''),  # "aws", "azure", etc.
+                "is_official": article_data.get('is_official', False),  # True if official blog
+                
+                # Phase 3: Engagement metrics (for ranking)
+                "likes": article_data.get('likes', 0),
+                "dislikes": article_data.get('dislikes', 0),
+                "views": article_data.get('views', 0),
+                
+                # Phase 3: Schema versioning
+                "processing_version": "v2_phase3"
             }
+            
+            # Phase 3: Document field = Llama-3 summary ONLY (not original HTML)
+            document = analysis_result
             
             # Upsert to ChromaDB
             # Use Appwrite Document ID ($id) as the ChromaDB ID for 1:1 mapping
             doc_id = article_data.get('$id')
             if not doc_id:
-                # Fallback if no ID provided (shouldn't happen with shadow path)
+                # Fallback if no ID provided
                 doc_id = article_data.get('url_hash', 'unknown')
 
             self.collection.upsert(
                 ids=[doc_id],
                 embeddings=[embedding],
                 metadatas=[metadata],
-                documents=[combined_text] # Optional: store raw text for debugging
+                documents=[document]
             )
             
-            logger.info("🧠 [ChromaDB] Upserted vector for: %s", article_data.get('title')[:30])
+            # Enhanced logging
+            cloud_status = "☁️ CLOUD" if metadata['is_cloud_news'] else "📰 REGULAR"
+            logger.info("🧠 [ChromaDB] Upserted: %s | %s | Tags: %s", 
+                       title_clean[:30], 
+                       cloud_status,
+                       metadata['tags'][:30] if metadata['tags'] else 'None')
             
         except Exception as e:
             logger.error("❌ [ChromaDB] Upsert failed: %s", e)
+
 
     def search_articles(self, query: str, limit: int = 10) -> List[Dict]:
         """

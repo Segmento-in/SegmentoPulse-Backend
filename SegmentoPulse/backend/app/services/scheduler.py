@@ -417,7 +417,11 @@ async def cleanup_old_news():
         logger.info("📅 Cutoff Date: %s", cutoff_date.strftime('%Y-%m-%d %H:%M:%S'))
         logger.info("🗑️  Articles published before this will be deleted...")
         
-        # Query and delete old articles
+        # =========================================================================
+        # Step 1: Clean Regular Articles Collection
+        # =========================================================================
+        logger.info("")
+        logger.info("📰 [STEP 1] Cleaning regular articles...")
         logger.info("🔍 Querying Appwrite for old articles...")
         from appwrite.query import Query
         
@@ -430,11 +434,11 @@ async def cleanup_old_news():
             ]
         )
         
-        logger.info("📊 Found %d old articles to delete", len(response['documents']))
+        logger.info("📊 Found %d old regular articles to delete", len(response['documents']))
         
-        deleted_count = 0
+        deleted_regular = 0
         if len(response['documents']) > 0:
-            logger.info("🗑️  Deleting articles...")
+            logger.info("🗑️  Deleting regular articles...")
         
         for doc in response['documents']:
             try:
@@ -450,14 +454,74 @@ async def cleanup_old_news():
                 except Exception as ve:
                     logger.warning("⚠️  Vector delete failed (non-critical): %s", ve)
                 
-                deleted_count += 1
-                if deleted_count % 10 == 0:
-                    logger.info("   Progress: %d articles deleted...", deleted_count)
+                deleted_regular += 1
+                if deleted_regular % 10 == 0:
+                    logger.info("   Progress: %d regular articles deleted...", deleted_regular)
             except Exception as e:
                 logger.error("❌ Error deleting document %s: %s", doc['$id'], e)
         
-        # Clear Redis cache to force refresh from updated database
-        logger.info("🔄 Clearing Redis cache...")
+        logger.info("✅ Regular articles cleanup: %d deleted", deleted_regular)
+        
+        # =========================================================================
+        # Step 2: Clean Cloud Articles Collection (Phase 3)
+        # =========================================================================
+        deleted_cloud = 0
+        
+        # Only clean cloud collection if it's configured
+        if settings.APPWRITE_CLOUD_COLLECTION_ID:
+            logger.info("")
+            logger.info("☁️  [STEP 2] Cleaning cloud articles...")
+            logger.info("🔍 Querying Appwrite for old cloud articles...")
+            
+            try:
+                cloud_response = appwrite_db.databases.list_documents(
+                    database_id=settings.APPWRITE_DATABASE_ID,
+                    collection_id=settings.APPWRITE_CLOUD_COLLECTION_ID,
+                    queries=[
+                        Query.less_than('published_at', cutoff_iso),
+                        Query.limit(500)
+                    ]
+                )
+                
+                logger.info("📊 Found %d old cloud articles to delete", len(cloud_response['documents']))
+                
+                if len(cloud_response['documents']) > 0:
+                    logger.info("🗑️  Deleting cloud articles...")
+                
+                for doc in cloud_response['documents']:
+                    try:
+                        appwrite_db.databases.delete_document(
+                            database_id=settings.APPWRITE_DATABASE_ID,
+                            collection_id=settings.APPWRITE_CLOUD_COLLECTION_ID,
+                            document_id=doc['$id']
+                        )
+                        
+                        # Cleanup from ChromaDB as well
+                        try:
+                            vector_store.delete_vector(doc['$id'])
+                        except Exception as ve:
+                            logger.warning("⚠️  Vector delete failed (non-critical): %s", ve)
+                        
+                        deleted_cloud += 1
+                        if deleted_cloud % 10 == 0:
+                            logger.info("   Progress: %d cloud articles deleted...", deleted_cloud)
+                    except Exception as e:
+                        logger.error("❌ Error deleting cloud document %s: %s", doc['$id'], e)
+                
+                logger.info("✅ Cloud articles cleanup: %d deleted", deleted_cloud)
+            
+            except Exception as e:
+                logger.warning("⚠️  Cloud collection cleanup skipped: %s", e)
+                logger.info("💡 Cloud collection may not exist yet - this is normal on first run")
+        else:
+            logger.info("")
+            logger.info("⏭️  [STEP 2] Skipping cloud articles (collection not configured)")
+        
+        # =========================================================================
+        # Step 3: Clear Redis Cache
+        # =========================================================================
+        logger.info("")
+        logger.info("🔄 [STEP 3] Clearing Redis cache...")
         cache_service = CacheService()
         cache_cleared = 0
         for category in CATEGORIES:
@@ -470,10 +534,17 @@ async def cleanup_old_news():
         if cache_cleared > 0:
             logger.info("✅ Cache cleared for %d categories", cache_cleared)
         
+        # =========================================================================
+        # Final Summary
+        # =========================================================================
+        total_deleted = deleted_regular + deleted_cloud
+        
         logger.info("")
         logger.info("═" * 80)
         logger.info("🎉 [CLEANUP JANITOR] COMPLETED!")
-        logger.info("🗑️  Total Deleted: %d articles", deleted_count)
+        logger.info("🗑️  Total Deleted: %d articles", total_deleted)
+        logger.info("   📰 Regular: %d", deleted_regular)
+        logger.info("   ☁️  Cloud: %d", deleted_cloud)
         logger.info("⏰ Retention: Articles older than %d hours removed", retention_hours)
         logger.info("🕐 Completion Time: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         logger.info("═" * 80)

@@ -34,8 +34,80 @@ logger = get_professional_logger(__name__)
 # ============================================================================
 # Space B Configuration
 # ============================================================================
+# Constants
+SPACE_B_URL = "https://workwithshafisk-segmentopulse-factory.hf.space"
 
-SPACE_B_URL = "https://workwithshafisk-segmentopulse-factory.hf.space"  # Note: Update this with your actual Space B URL
+# Phase 3: Cloud News Categories
+CLOUD_CATEGORIES = [
+    "cloud-aws",
+    "cloud-azure",
+    "cloud-gcp",
+    "cloud-oracle",
+    "cloud-ibm",
+    "cloud-alibaba",
+    "cloud-digitalocean",
+    "cloud-huawei",
+    "cloud-cloudflare",
+    "cloud-computing"  # General cloud news
+]
+
+# Phase 3: Official Cloud Provider Feeds
+OFFICIAL_CLOUD_FEEDS = {
+    "https://aws.amazon.com/blogs/aws/feed/": ("aws", True),
+    "https://azure.microsoft.com/en-us/blog/feed/": ("azure", True),
+    "https://cloudblog.withgoogle.com/rss/": ("gcp", True),
+    "https://blogs.oracle.com/cloud-infrastructure/rss": ("oracle", True),
+    "https://www.ibm.com/blog/category/ibm-cloud/feed/": ("ibm", True),
+    "https://www.alibabacloud.com/blog/rss.xml": ("alibaba", True),
+    "https://www.digitalocean.com/blog/rss.xml": ("digitalocean", True),
+    "https://developer.huaweicloud.com/intl/en-us/feed": ("huawei", True),
+    "https://blog.cloudflare.com/rss/": ("cloudflare", True)
+}
+
+
+def determine_cloud_provider(category: str, source_feed: str) -> tuple:
+    """
+    Phase 3: Determine cloud provider and whether article is from official blog.
+    
+    Args:
+        category: News category (e.g., "cloud-aws")
+        source_feed: RSS feed URL
+        
+    Returns:
+        Tuple of (provider_name, is_official)
+        
+    Examples:
+        ("aws", True) - From aws.amazon.com/blogs
+        ("azure", False) - From Google News about Azure
+    """
+    # Check if from official feed
+    if source_feed in OFFICIAL_CLOUD_FEEDS:
+        return OFFICIAL_CLOUD_FEEDS[source_feed]
+    
+    # From news API - extract provider from category
+    if category.startswith('cloud-'):
+        provider = category.replace('cloud-', '')
+        return (provider, False)
+    
+    return ("general", False)
+
+
+def route_to_collection(category: str, config_obj) -> str:
+    """
+    Phase 3: Determine which Appwrite collection to use.
+    
+    Args:
+        category: Article category
+        config_obj: Settings object with collection IDs
+        
+    Returns:
+        Collection ID string
+    """
+    if category in CLOUD_CATEGORIES and config_obj.APPWRITE_CLOUD_COLLECTION_ID:
+        return config_obj.APPWRITE_CLOUD_COLLECTION_ID
+    else:
+        return config_obj.APPWRITE_COLLECTION_ID
+
 SPACE_B_TIMEOUT = 30  # seconds (Llama-3 is slow on CPU)
 
 
@@ -313,26 +385,37 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
 # Article Processing with Space B + ChromaDB
 # ============================================================================
 
-async def process_and_store_article(url: str, raw_text: str, category: str, title: str = "") -> Optional[Dict]:
+async def process_and_store_article(
+    url: str, 
+    raw_text: str, 
+    category: str, 
+    title: str = "",
+    source_feed: str = ""
+) -> Optional[Dict]:
     """
-    Phase 2 CQRS: Offload processing to Space B, then store in ChromaDB
+    Phase 3: Enhanced processing with cloud detection and engagement metrics
     
     Architecture:
     1. Send raw_text to Space B's /process-article endpoint
     2. Receive summary + tags from Space B
-    3. Generate embeddings locally using sentence-transformers
-    4. Store in ChromaDB
+    3. Detect cloud provider and routing
+    4. Add engagement metrics (likes, views)
+    5. Generate embeddings locally using sentence-transformers
+    6. Store in ChromaDB with rich metadata
     
     Args:
         url: Article URL (used as ID)
         raw_text: Full article content
         category: Article category
         title: Article title (optional)
+        source_feed: RSS feed URL (for cloud detection)
         
     Returns:
         Dictionary with processing results or None on error
     """
     try:
+        from app.utils import strip_html_if_needed, list_to_comma_separated
+        
         logger.space_b_call(url, "started")
         
         # -------------------------------------------------------------------------
@@ -377,57 +460,84 @@ async def process_and_store_article(url: str, raw_text: str, category: str, titl
             return None
         
         # -------------------------------------------------------------------------
-        # Step 2: Generate embeddings locally with sentence-transformers
+        # Step 2: Phase 3 - Cloud Detection
         # -------------------------------------------------------------------------
-        # ChromaDB vector_store has embedded model (all-MiniLM-L6-v2)
-        # We'll use the existing upsert_article method
+        is_cloud = category in CLOUD_CATEGORIES
+        provider, is_official = determine_cloud_provider(category, source_feed)
+        
+        if is_cloud:
+            logger.info(f"☁️  Cloud article detected: {provider} (official={is_official})")
         
         # -------------------------------------------------------------------------
-        # Step 3: Prepare article data for ChromaDB
+        # Step 3: Phase 3 - HTML Stripping & Text Cleaning
+        # -------------------------------------------------------------------------
+        title_clean = strip_html_if_needed(title) if title else summary[:100]
+        summary_clean = strip_html_if_needed(summary)
+        
+        # -------------------------------------------------------------------------
+        # Step 4: Prepare article data for ChromaDB with Phase 3 metadata
         # -------------------------------------------------------------------------
         url_hash = hashlib.md5(url.encode()).hexdigest()
         
+        # Convert tags list to comma-separated string
+        tags_str = list_to_comma_separated(tags)
+        
         article_data = {
             "$id": url_hash,
-            "title": title or summary[:100],  # Use title if available, else first part of summary
-            "description": summary,
+            
+            # Core content (cleaned)
+            "title": title_clean,
+            "description": summary_clean,
             "url": url,
             "source": "Segmento AI",
             "category": category,
             "published_at": datetime.now().isoformat(),
             "image": "",  # No image for now
-            "tags": tags
+            
+            # Phase 3: Tags from GLiNER
+            "tags": tags_str,
+            
+            # Phase 3: Cloud detection
+            "is_cloud_news": is_cloud,
+            "cloud_provider": provider if is_cloud else "",
+            "is_official": is_official if is_cloud else False,
+            
+            # Phase 3: Engagement metrics
+            "likes": 0,
+            "dislikes": 0,
+            "views": 0
         }
         
         # -------------------------------------------------------------------------
-        # Step 4: Store in ChromaDB
+        # Step 5: Store in ChromaDB with Phase 3 enhanced schema
         # -------------------------------------------------------------------------
-        # Create combined text: Title + Summary + Tags (for richer embeddings)
+        # Create combined text for embedding: Title + Summary + Tags
         tags_text = " ".join(tags) if tags else ""
-        combined_analysis = f"Summary: {summary}\nTags: {tags_text}"
+        combined_analysis = f"Summary: {summary_clean}\nTags: {tags_text}"
         
         # Upsert to vector store (handles embedding generation internally)
         vector_store.upsert_article(article_data, combined_analysis)
         ingestion_stats.chromadb_upserts += 1
         ingestion_stats.articles_saved += 1
         
-        logger.success(f"ChromaDB stored: {title[:50] if title else url[:50]}")
+        cloud_emoji = "☁️" if is_cloud else "📰"
+        logger.success(f"{cloud_emoji} ChromaDB stored: {title_clean[:50]}")
         
         return {
             "url": url,
-            "summary": summary,
+            "summary": summary_clean,
             "tags": tags,
+            "is_cloud": is_cloud,
+            "provider": provider if is_cloud else None,
             "stored": True
         }
         
     except Exception as e:
-        logger.error(f"[CQRS] Processing failed for {url}: {e}")
+        logger.error(f"[Phase 3 CQRS] Processing failed for {url}: {e}")
         return None
 
 
 async def fetch_single_category(category: str) -> List[Article]:
-    """
-    Convenience function to fetch a single category
     
     Args:
         category: Category name

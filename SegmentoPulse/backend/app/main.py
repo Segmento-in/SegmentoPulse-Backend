@@ -70,6 +70,10 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(subscription.router, tags=["Subscription"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 
+# Phase 3: Engagement tracking
+from app.routes import engagement
+app.include_router(engagement.router, prefix="/api/engagement", tags=["Engagement"])
+
 @app.get("/")
 async def root():
     """Root endpoint"""

@@ -50,12 +50,13 @@ class Settings(BaseSettings):
     # Frontend URL (for unsubscribe links)
     FRONTEND_URL: str = "https://segmento.in"
     
-    # Appwrite Database (Phase 2)
+    # Appwrite Database
     APPWRITE_ENDPOINT: str = "https://nyc.cloud.appwrite.io/v1"
     APPWRITE_PROJECT_ID: str = ""
     APPWRITE_API_KEY: str = ""
     APPWRITE_DATABASE_ID: str = "segmento_db"
-    APPWRITE_COLLECTION_ID: str = "articles"
+    APPWRITE_COLLECTION_ID: str = "articles"  # Regular articles
+    APPWRITE_CLOUD_COLLECTION_ID: str = ""  # Phase 3: Cloud news (to be created)
     
     # Admin Alerting (Optional - Discord/Slack webhook URL)
     ADMIN_WEBHOOK_URL: Optional[str] = None

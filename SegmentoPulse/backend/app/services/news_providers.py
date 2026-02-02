@@ -494,7 +494,7 @@ class OfficialCloudProvider(NewsProvider):
             'cloud-alibaba': 'https://www.alibabacloud.com/blog/feed',
             'cloud-digitalocean': 'https://www.digitalocean.com/blog/rss.xml',
             'cloud-cloudflare': 'https://blog.cloudflare.com/rss/',
-            'cloud-huawei': 'https://blog.huawei.com/feed/', # Generic Huawei blog often used
+            'cloud-huawei': 'https://blog.huawei.com', # Generic Huawei blog often used
         }
 
     async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:
