@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Space B Configuration
 # ============================================================================
 
-SPACE_B_URL = "https://workwithshafisk-segmentopulse-backend.hf.space"
+SPACE_B_URL = "https://workwithshafisk-segmentopulse-factory.hf.space"  # Note: Update this with your actual Space B URL
 SPACE_B_TIMEOUT = 30  # seconds (Llama-3 is slow on CPU)
 
 
