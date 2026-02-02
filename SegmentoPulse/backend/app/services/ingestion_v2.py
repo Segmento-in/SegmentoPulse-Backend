@@ -1,21 +1,24 @@
 """
-Ingestion Engine v2 - LlamaIndex + Bloom Filter
+Ingestion Engine v2 - Custom Document Pipeline + Bloom Filter
 
-Next-generation news ingestion pipeline using:
-- LlamaIndex RSSReader for robust RSS parsing (from llama-index-readers-web)
+News ingestion pipeline with hardcoded LlamaIndex value:
+- Custom Document objects for standardized data structure
+- Feedparser for robust RSS parsing
 - Bloom Filter for URL deduplication
 - Parallel processing for high throughput
 
-This uses LlamaIndex's modular package structure for reliable RSS parsing.
+No external LlamaIndex dependency - we implement the concepts ourselves.
 """
 
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Optional
 import logging
+import feedparser
 
-from llama_index.core import Document
-from llama_index.readers.web import RssReader, SimpleWebPageReader
+# Custom Document class (replaces LlamaIndex)
+from app.services.document import Document, create_document_from_rss_entry
+from app.services.chunker import SentenceSplitter
 
 from app.models import Article
 from app.services.deduplication import get_url_filter
@@ -100,39 +103,36 @@ CATEGORY_RSS_FEEDS = {
 
 async def fetch_category_rss(category: str, rss_urls: List[str]) -> List[Document]:
     """
-    Fetch RSS feeds for a category using LlamaIndex RssReader
+    Fetch RSS feeds for a category using feedparser + custom Document
     
     Args:
         category: News category
         rss_urls: List of RSS feed URLs
         
     Returns:
-        List of LlamaIndex Document objects
+        List of custom Document objects
     """
     try:
-        logger.info(f"📡 [LLAMAINDEX] Fetching RSS for {category.upper()}...")
-        
-        # Initialize RssReader from llama-index-readers-web
-        reader = RssReader()
+        logger.info(f"📡 [CUSTOM PARSER] Fetching RSS for {category.upper()}...")
         
         all_documents = []
         
         # Fetch each RSS feed
         for url in rss_urls:
             try:
-                # RssReader.load_data returns List[Document]
-                # Run in thread pool since it's synchronous
-                documents = await asyncio.to_thread(reader.load_data, [url])
+                # Parse RSS feed with feedparser
+                feed = await asyncio.to_thread(feedparser.parse, url)
                 
-                # Add category metadata to each document
-                for doc in documents:
-                    if not doc.metadata:
-                        doc.metadata = {}
-                    doc.metadata['category'] = category
-                    doc.metadata['source_feed'] = url
+                # Convert each entry to Document
+                for entry in feed.entries:
+                    doc = create_document_from_rss_entry(
+                        entry=entry,
+                        category=category,
+                        source_feed=url
+                    )
+                    all_documents.append(doc)
                 
-                all_documents.extend(documents)
-                logger.debug(f"   ✓ Fetched {len(documents)} articles from {url[:50]}...")
+                logger.debug(f"   ✓ Fetched {len(feed.entries)} articles from {url[:50]}...")
                 
             except Exception as e:
                 logger.warning(f"   ⚠️  Failed to fetch {url}: {e}")
@@ -191,7 +191,7 @@ def convert_llamaindex_to_article(doc: Document, category: str) -> Optional[Arti
 
 async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
     """
-    Main ingestion function using LlamaIndex + Bloom Filter
+    Main ingestion function using Custom Document + Bloom Filter
     
     Fetches news for multiple categories in parallel, deduplicates URLs,
     and returns structured Article objects.
@@ -205,7 +205,7 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
     start_time = datetime.now()
     
     logger.info("═" * 80)
-    logger.info("🚀 [INGESTION V2] Starting LlamaIndex-powered ingestion...")
+    logger.info("🚀 [INGESTION V2] Starting Custom Document ingestion...")
     logger.info(f"🕐 Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"📂 Categories: {len(categories)}")
     logger.info("═" * 80)

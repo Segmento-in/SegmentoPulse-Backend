@@ -9,39 +9,39 @@ feedparser==6.0.11
 requests==2.31.0
 beautifulsoup4==4.12.3
 
-# HTTP Client (upgraded for LlamaIndex compatibility)
-httpx==0.28.1
+# HTTP Client
+httpx==0.26.0
 
 # Caching
 redis==5.0.1
 hiredis==2.3.2
 
-# Firebase
+# Firebase Admin
 firebase-admin==6.4.0
 
-# Data processing
+# Date handling
 python-dateutil==2.8.2
 
-# CORS & Security
+# File upload handling
 python-multipart==0.0.6
 email-validator==2.1.0
 
-# Brevo (Sendinblue)
+# Email service (Brevo/Sendinblue)
 sib-api-v3-sdk==7.6.0
 
-# Appwrite Database
+# Appwrite SDK
 appwrite==14.1.0
 
-# Background Workers
+# Background jobs
 apscheduler==3.10.4
 
-# Agentic AI Upgrade
-# Pinning versions to avoid pip backtracking (dependency hell)
+# AI & Vector DB
+# ChromaDB for vector storage and similarity search
 chromadb==0.4.24
 sentence-transformers==3.0.1
 
-# CrewAI & LangChain Stability Pack
-# These versions are known to work together without conflicts
+# CrewAI & LangChain
+# Agent orchestration and multi-agent workflows
 crewai==0.30.11
 langchain==0.1.20
 langchain-community==0.0.38
@@ -51,9 +51,8 @@ langchain-groq==0.1.3
 auth0-python==4.7.1
 
 # Phase 1: Ingestion Pipeline Upgrade
-# LlamaIndex - Modular Installation (Core + Web Readers)
-llama-index-core==0.12.9           # Core framework
-llama-index-readers-web==0.5.6     # Web/RSS readers
+# Custom Document implementation (no LlamaIndex dependency)
+# LlamaIndex value hardcoded in app/services/document.py & chunker.py
 
 # Bloom Filter - Lightweight URL deduplication
 pybloom-live==4.0.0
