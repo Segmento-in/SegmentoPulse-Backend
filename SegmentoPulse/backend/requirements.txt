@@ -9,8 +9,8 @@ feedparser==6.0.11
 requests==2.31.0
 beautifulsoup4==4.12.3
 
-# HTTP client
-httpx==0.26.0
+# HTTP Client (upgraded for LlamaIndex compatibility)
+httpx==0.28.1
 
 # Caching
 redis==5.0.1
