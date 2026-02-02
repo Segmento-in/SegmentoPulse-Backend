@@ -15,6 +15,65 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/articles/{article_id}/stats")
+async def get_article_stats(article_id: str):
+    """
+    Get engagement stats for an article.
+    
+    Phase 3: Retrieve likes, dislikes, and views.
+    
+    Args:
+        article_id: Document ID from Appwrite
+        
+    Returns:
+        Article stats (likes, dislikes, views)
+    """
+    try:
+        appwrite_db = get_appwrite_db()
+        
+        # Try regular articles collection first
+        collection_id = settings.APPWRITE_COLLECTION_ID
+        
+        try:
+            doc = appwrite_db.databases.get_document(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=collection_id,
+                document_id=article_id
+            )
+        except:
+            # Try cloud articles collection
+            if settings.APPWRITE_CLOUD_COLLECTION_ID:
+                collection_id = settings.APPWRITE_CLOUD_COLLECTION_ID
+                doc = appwrite_db.databases.get_document(
+                    database_id=settings.APPWRITE_DATABASE_ID,
+                    collection_id=collection_id,
+                    document_id=article_id
+                )
+            else:
+                raise HTTPException(status_code=404, detail="Article not found")
+        
+        return {
+            "article_id": article_id,
+            "likes": doc.get('likes', 0),
+            "dislikes": doc.get('dislikes', 0),
+            "views": doc.get('views', 0),
+            "success": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting stats for {article_id}: {e}")
+        # Return zeros instead of failing
+        return {
+            "article_id": article_id,
+            "likes": 0,
+            "dislikes": 0,
+            "views": 0,
+            "success": False
+        }
+
+
 @router.post("/articles/{article_id}/like")
 async def like_article(article_id: str):
     """

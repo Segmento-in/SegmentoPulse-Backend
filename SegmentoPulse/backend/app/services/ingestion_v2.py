@@ -538,6 +538,8 @@ async def process_and_store_article(
 
 
 async def fetch_single_category(category: str) -> List[Article]:
+    """
+    Convenience function to fetch a single category
     
     Args:
         category: Category name
