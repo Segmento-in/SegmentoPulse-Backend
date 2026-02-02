@@ -2,20 +2,20 @@
 Ingestion Engine v2 - LlamaIndex + Bloom Filter
 
 Next-generation news ingestion pipeline using:
-- LlamaIndex RSSReader for robust RSS parsing
-- LlamaIndex SimpleWebPageReader for web scraping
+- LlamaIndex RSSReader for robust RSS parsing (from llama-index-readers-web)
 - Bloom Filter for URL deduplication
 - Parallel processing for high throughput
 
-This replaces manual feedparser/requests scripts with production-grade data loaders.
+This uses LlamaIndex's modular package structure for reliable RSS parsing.
 """
 
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Optional
 import logging
-import feedparser
-from dateutil import parser as date_parser
+
+from llama_index.core import Document
+from llama_index.readers.web import RssReader, SimpleWebPageReader
 
 from app.models import Article
 from app.services.deduplication import get_url_filter
@@ -98,74 +98,74 @@ CATEGORY_RSS_FEEDS = {
 }
 
 
-async def fetch_category_rss(category: str, rss_urls: List[str]) -> List[Dict]:
+async def fetch_category_rss(category: str, rss_urls: List[str]) -> List[Document]:
     """
-    Fetch RSS feeds for a category using feedparser
+    Fetch RSS feeds for a category using LlamaIndex RssReader
     
     Args:
         category: News category
         rss_urls: List of RSS feed URLs
         
     Returns:
-        List of article dictionaries
+        List of LlamaIndex Document objects
     """
     try:
-        logger.info(f"📡 [RSS] Fetching RSS for {category.upper()}...")
+        logger.info(f"📡 [LLAMAINDEX] Fetching RSS for {category.upper()}...")
         
-        all_articles = []
+        # Initialize RssReader from llama-index-readers-web
+        reader = RssReader()
+        
+        all_documents = []
         
         # Fetch each RSS feed
         for url in rss_urls:
             try:
-                # Parse RSS feed
-                feed = await asyncio.to_thread(feedparser.parse, url)
+                # RssReader.load_data returns List[Document]
+                # Run in thread pool since it's synchronous
+                documents = await asyncio.to_thread(reader.load_data, [url])
                 
-                # Extract articles from feed
-                for entry in feed.entries:
-                    article_data = {
-                        'title': entry.get('title', '')[:200],
-                        'url': entry.get('link', ''),
-                        'description': entry.get('summary', '')[:500] or entry.get('description', '')[:500],
-                        'published': entry.get('published', datetime.now().isoformat()),
-                        'source': feed.feed.get('title', 'Unknown'),
-                        'category': category,
-                        'source_feed': url
-                    }
-                    
-                    all_articles.append(article_data)
+                # Add category metadata to each document
+                for doc in documents:
+                    if not doc.metadata:
+                        doc.metadata = {}
+                    doc.metadata['category'] = category
+                    doc.metadata['source_feed'] = url
                 
-                logger.debug(f"   ✓ Fetched {len(feed.entries)} articles from {url[:50]}...")
+                all_documents.extend(documents)
+                logger.debug(f"   ✓ Fetched {len(documents)} articles from {url[:50]}...")
                 
             except Exception as e:
                 logger.warning(f"   ⚠️  Failed to fetch {url}: {e}")
                 continue
         
-        logger.info(f"   ✅ Total fetched: {len(all_articles)} articles for {category}")
-        return all_articles
+        logger.info(f"   ✅ Total fetched: {len(all_documents)} documents for {category}")
+        return all_documents
         
     except Exception as e:
         logger.error(f"❌ Error fetching category {category}: {e}")
         return []
 
 
-def convert_to_article(article_data: Dict, category: str) -> Optional[Article]:
+def convert_llamaindex_to_article(doc: Document, category: str) -> Optional[Article]:
     """
-    Convert article dictionary to Article model
+    Convert LlamaIndex Document to Article model
     
     Args:
-        article_data: Article data dictionary from feedparser
+        doc: LlamaIndex Document object
         category: News category
         
     Returns:
         Article object or None if conversion fails
     """
     try:
-        # Extract fields
-        title = article_data.get('title', '')[:200]
-        url = article_data.get('url', '')
-        description = article_data.get('description', '')[:500]
-        published_at = article_data.get('published', datetime.now().isoformat())
-        source = article_data.get('source', 'Unknown')
+        metadata = doc.metadata or {}
+        
+        # Extract fields from metadata
+        title = metadata.get('title', '')[:200]
+        url = metadata.get('link') or metadata.get('url', '')
+        description = doc.text[:500] if doc.text else metadata.get('description', '')[:500]
+        published_at = metadata.get('published', datetime.now().isoformat())
+        source = metadata.get('source') or metadata.get('author', 'Unknown')
         
         # Basic validation
         if not title or not url:
@@ -176,7 +176,7 @@ def convert_to_article(article_data: Dict, category: str) -> Optional[Article]:
             title=title,
             description=description,
             url=url,
-            image='',  # No image from RSS
+            image=metadata.get('image', ''),
             publishedAt=published_at,
             source=source,
             category=category
@@ -185,13 +185,13 @@ def convert_to_article(article_data: Dict, category: str) -> Optional[Article]:
         return article
         
     except Exception as e:
-        logger.error(f"❌ Error converting article: {e}")
+        logger.error(f"❌ Error converting document to article: {e}")
         return None
 
 
 async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
     """
-    Main ingestion function using feedparser + Bloom Filter
+    Main ingestion function using LlamaIndex + Bloom Filter
     
     Fetches news for multiple categories in parallel, deduplicates URLs,
     and returns structured Article objects.
@@ -205,7 +205,7 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
     start_time = datetime.now()
     
     logger.info("═" * 80)
-    logger.info("🚀 [INGESTION V2] Starting feedparser + Bloom Filter ingestion...")
+    logger.info("🚀 [INGESTION V2] Starting LlamaIndex-powered ingestion...")
     logger.info(f"🕐 Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"📂 Categories: {len(categories)}")
     logger.info("═" * 80)
@@ -237,16 +237,16 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
     for category, task in fetch_tasks:
         try:
             # Await each task
-            articles_data = await task
-            total_fetched += len(articles_data)
+            documents = await task
+            total_fetched += len(documents)
             
             # Deduplicate and convert to Article objects
             articles = []
             duplicates = 0
             
-            for article_data in articles_data:
+            for doc in documents:
                 # Extract URL for deduplication
-                url = article_data.get('url', '')
+                url = doc.metadata.get('link') or doc.metadata.get('url', '')
                 
                 if not url:
                     continue
@@ -254,7 +254,7 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
                 # Check if URL is new
                 if url_filter.check_and_add(url):
                     # New URL - convert to Article
-                    article = convert_to_article(article_data, category)
+                    article = convert_llamaindex_to_article(doc, category)
                     if article:
                         articles.append(article)
                         total_converted += 1
@@ -265,7 +265,7 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
             
             results[category] = articles
             
-            logger.info(f"✅ {category.upper()}: {len(articles_data)} fetched, {len(articles)} new, {duplicates} duplicates")
+            logger.info(f"✅ {category.upper()}: {len(documents)} fetched, {len(articles)} new, {duplicates} duplicates")
             
         except Exception as e:
             logger.error(f"❌ Error processing {category}: {e}")
@@ -280,14 +280,14 @@ async def fetch_latest_news(categories: List[str]) -> Dict[str, List[Article]]:
     logger.info("🎉 [INGESTION V2] RUN COMPLETED")
     logger.info("═" * 80)
     logger.info("📊 SUMMARY STATISTICS:")
-    logger.info(f"   🔹 Total Fetched: {total_fetched} articles")
+    logger.info(f"   🔹 Total Fetched: {total_fetched} documents")
     logger.info(f"   🔹 Total Converted: {total_converted} articles")
     logger.info(f"   🔹 Total Duplicates Skipped: {total_deduped} articles")
     logger.info(f"   🔹 Deduplication Rate: {(total_deduped / total_fetched * 100) if total_fetched > 0 else 0:.1f}%")
     logger.info("")
     logger.info("⏱️  PERFORMANCE:")
     logger.info(f"   🔹 Duration: {duration:.2f} seconds")
-    logger.info(f"   🔹 Throughput: {total_fetched / duration if duration > 0 else 0:.1f} articles/second")
+    logger.info(f"   🔹 Throughput: {total_fetched / duration if duration > 0 else 0:.1f} docs/second")
     logger.info("═" * 80)
     
     # Print URL filter stats
