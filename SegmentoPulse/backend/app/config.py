@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     # Environment
     ENVIRONMENT: str = "development"
     
+    # Logging
+    LOG_LEVEL: str = "INFO"  # INFO for development, WARNING for production
+    
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000

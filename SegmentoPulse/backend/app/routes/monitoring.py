@@ -182,3 +182,105 @@ def _get_recommendations(hit_rate: float, stats: dict) -> list:
         recommendations.append("Not enough data to provide recommendations yet.")
     
     return recommendations if recommendations else ["Cache performance is within normal parameters."]
+
+
+@router.get("/ingestion/stats")
+async def get_ingestion_stats():
+    """
+    Get ingestion statistics
+    
+    Returns metrics about news ingestion performance:
+    - Last run timestamp
+    - Total runs tracked
+    - Lifetime totals (fetched, saved, duplicates, errors)
+    - Average duplicate and error rates
+    - Recent run history
+    
+    Example Response:
+        {
+            "success": true,
+            "data": {
+                "total_runs": 24,
+                "last_run": "2026-02-03T12:30:00",
+                "lifetime_totals": {
+                    "fetched": 12450,
+                    "saved": 850,
+                    "duplicates": 11600,
+                    "errors": 0
+                },
+                "averages": {
+                    "duplicate_rate": 93.2,
+                    "error_rate": 0.0
+                },
+                "recent_runs": [...]
+            }
+        }
+    """
+    try:
+        from app.services.ingestion_metrics import get_ingestion_metrics
+        
+        metrics = get_ingestion_metrics()
+        stats = metrics.get_stats()
+        
+        return {
+            "success": True,
+            "data": stats,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting ingestion stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ingestion/alerts")
+async def get_ingestion_alerts():
+    """
+    Check for ingestion alerts
+    
+    Monitors:
+    - High duplicate rate (>90%)
+    - High error rate (>20%)
+    - No articles saved despite successfully fetching
+    
+    Returns list of active alerts with severity levels.
+    
+    Example Response:
+        {
+            "success": true,
+            "alert_count": 1,
+            "alerts": [
+                {
+                    "severity": "warning",
+                    "type": "high_duplicate_rate",
+                    "message": "Duplicate rate is 93.2% (threshold: 90%)",
+                    "value": 93.2
+                }
+            ],
+            "thresholds": {
+                "duplicate_rate": 90,
+                "error_rate": 20
+            }
+        }
+    """
+    try:
+        from app.services.ingestion_metrics import get_ingestion_metrics
+        
+        metrics = get_ingestion_metrics()
+        alerts = metrics.check_alerts()
+        
+        return {
+            "success": True,
+            "alert_count": len(alerts),
+            "alerts": alerts,
+            "thresholds": {
+                "duplicate_rate": 90,
+                "error_rate": 20
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking ingestion alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

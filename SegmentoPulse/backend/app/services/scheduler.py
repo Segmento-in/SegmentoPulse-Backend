@@ -187,6 +187,18 @@ async def fetch_all_news():
     logger.info("   🔹 Speed Improvement: ~12x faster than sequential")
     logger.info("═" * 80)
     
+    # Record ingestion metrics for monitoring
+    from app.services.ingestion_metrics import get_ingestion_metrics
+    
+    ingestion_metrics = get_ingestion_metrics()
+    ingestion_metrics.record_run(
+        fetched=total_fetched,
+        saved=total_saved,
+        duplicates=total_duplicates,
+        errors=total_errors,
+        categories_processed=len(CATEGORIES) - total_errors
+    )
+    
     # FAANG Optimization: Update adaptive scheduler intervals
     from app.services.adaptive_scheduler import get_adaptive_scheduler
     
