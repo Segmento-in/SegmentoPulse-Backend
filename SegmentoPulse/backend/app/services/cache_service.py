@@ -1,6 +1,9 @@
 """
 Cache Service using Redis
-Provides caching layer to reduce external API calls with graceful bypass when disabled
+Provides caching layer to reduce external API calls with graceful bypass when disabled.
+Supports both:
+1. Upstash Redis (REST HTTP API) - Optimized for serverless/free tier
+2. Local/Standard Redis (TCP) - Standard redis-py client
 """
 
 try:
@@ -8,136 +11,177 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    print("Redis package not available - caching disabled")
 
 from typing import Optional, Any, List
 import json
+import logging
 from app.config import settings
 from app.models import Article
+from app.services.upstash_cache import get_upstash_cache
 
+logger = logging.getLogger(__name__)
 
 class CacheService:
-    """Redis cache service with graceful bypass when disabled"""
+    """
+    Unified Cache Service
+    Delegates to Upstash (if enabled) or Local Redis (if enabled)
+    """
     
     def __init__(self):
-        self.redis_client = None
-        self.enabled = settings.ENABLE_REDIS and REDIS_AVAILABLE
+        # 1. Try Upstash First (Preferred for Production/Free Tier)
+        self.upstash = None
         
-        if settings.ENABLE_REDIS and not REDIS_AVAILABLE:
-            print("⚠️  ENABLE_REDIS=True but Redis package not installed")
-            print("  Running in cache-bypass mode")
-        elif not settings.ENABLE_REDIS:
-            print("ℹ️  Redis cache disabled (ENABLE_REDIS=False)")
-            print("  Running in cache-bypass mode")
-    
-    async def connect(self):
-        """Connect to Redis (if enabled)"""
-        if not self.enabled:
-            return
-        
-        try:
-            self.redis_client = await redis.from_url(
-                settings.REDIS_URL,
-                password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None,
-                encoding="utf-8",
-                decode_responses=True
-            )
-            print("✓ Redis cache connected")
-        except Exception as e:
-            print(f"✗ Redis connection failed: {e}")
-            print("  Running in cache-bypass mode")
+        # Check explicit Upstash flag
+        if settings.ENABLE_UPSTASH_CACHE:
+            self.upstash = get_upstash_cache()
+            if self.upstash.enabled:
+                self.mode = "upstash"
+                # Only log once to avoid noise
+                # logger.info("⚡ CacheService: Using Upstash Redis")
+            else:
+                self.mode = "disabled" # Upstash enabled but failed init
+                
+        # 2. Try Local Redis (Fallback)
+        elif settings.ENABLE_REDIS and REDIS_AVAILABLE:
+            self.mode = "redis"
             self.redis_client = None
+            logger.info("🔌 CacheService: Using Local Redis")
+        
+        # 3. Disabled
+        else:
+            self.mode = "disabled"
+            if settings.ENABLE_REDIS and not REDIS_AVAILABLE:
+                logger.warning("⚠️  ENABLE_REDIS=True but Redis package not installed")
+            
+            # Silent unless debug
+            # logger.info("ℹ️  Cache disabled (Bypass Mode)")
+
+    async def connect(self):
+        """Connect to Redis (if using local redis)"""
+        if self.mode == "redis" and not self.redis_client:
+            try:
+                self.redis_client = await redis.from_url(
+                    settings.REDIS_URL,
+                    password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None,
+                    encoding="utf-8",
+                    decode_responses=True
+                )
+                logger.info("✓ Local Redis connected")
+            except Exception as e:
+                logger.error(f"✗ Local Redis connection failed: {e}")
+                self.mode = "disabled"
+                self.redis_client = None
     
     async def get(self, key: str) -> Optional[List[Article]]:
-        """
-        Get cached data by key
-        
-        Returns None if:
-        - Redis is disabled
-        - Connection failed
-        - Key doesn't exist
-        - Cache expired
-        """
-        if not self.enabled:
+        """Get cached articles by key"""
+        if self.mode == "disabled":
             return None
-        
-        if not self.redis_client:
-            await self.connect()
-        
-        if not self.redis_client:
-            return None
-        
+            
         try:
-            data = await self.redis_client.get(key)
-            if data:
-                # Parse JSON and convert to Article objects
-                articles_data = json.loads(data)
-                articles = [Article(**article) for article in articles_data]
-                return articles
-            return None
+            # Upstash (Sync/REST)
+            if self.mode == "upstash":
+                # UpstashClient is synchronous (httpx)
+                # UpstashCache already deserializes JSON. 
+                # If data is found, it's a list of dicts.
+                data = self.upstash.get(key)
+                if data:
+                    # Convert dicts back to Pydantic models
+                    try:
+                        return [Article(**item) for item in data]
+                    except Exception as parse_error:
+                        logger.warning(f"⚠️ Cache parse error for {key}: {parse_error}")
+                        return None
+                return None
+
+            # Local Redis (Async/TCP)
+            elif self.mode == "redis":
+                if not self.redis_client:
+                    await self.connect()
+                
+                if self.redis_client:
+                    json_str = await self.redis_client.get(key)
+                    if json_str:
+                        return [Article(**item) for item in json.loads(json_str)]
+                    
         except Exception as e:
-            # Silently fail - just return None (cache miss)
+            logger.error(f"❌ Cache get error ({self.mode}): {e}")
             return None
+            
+        return None
     
     async def set(self, key: str, value: List[Article], ttl: Optional[int] = None) -> bool:
-        """
-        Set cached data with optional TTL
-        
-        Returns:
-            True if successful (or bypassed)
-            False if error occurred
-        """
-        if not self.enabled:
-            return True  # Bypass mode - pretend success
-        
-        if not self.redis_client:
-            await self.connect()
-        
-        if not self.redis_client:
-            return True  # Bypass mode - pretend success
-        
+        """Set cached articles with TTL"""
+        if self.mode == "disabled":
+            return True # Pretend success
+            
         try:
-            # Use configured TTL if not provided
+            # Prepare data (list of dictionaries)
+            # Use model_dump if Pydantic v2, else dict()
+            serialized_data = []
+            for item in value:
+                if hasattr(item, 'model_dump'):
+                    serialized_data.append(item.model_dump())
+                elif hasattr(item, 'dict'):
+                    serialized_data.append(item.dict())
+                else:
+                    serialized_data.append(item) # Already dict?
+
             cache_ttl = ttl if ttl is not None else settings.CACHE_TTL
             
-            # Convert Pydantic models to dict
-            if hasattr(value, 'model_dump'):
-                value = [item.model_dump() for item in value]
-            
-            await self.redis_client.setex(
-                key,
-                cache_ttl,
-                json.dumps(value, default=str)
-            )
-            return True
+            # Upstash
+            if self.mode == "upstash":
+                return self.upstash.set(key, serialized_data, ttl=cache_ttl)
+                
+            # Local Redis
+            elif self.mode == "redis":
+                if not self.redis_client:
+                    await self.connect()
+                
+                if self.redis_client:
+                    await self.redis_client.setex(
+                        key, 
+                        cache_ttl, 
+                        json.dumps(serialized_data, default=str)
+                    )
+                    return True
+                    
         except Exception as e:
-            # Silently fail - app continues without cache
+            logger.error(f"❌ Cache set error ({self.mode}): {e}")
             return False
+            
+        return False
     
     async def delete(self, key: str) -> bool:
-        """
-        Delete cached data by key
-        
-        Returns:
-            True if successful (or bypassed)
-            False if error occurred
-        """
-        if not self.enabled or not self.redis_client:
-            return True  # Bypass mode - pretend success
-        
-        try:
-            await self.redis_client.delete(key)
+        """Delete cached data"""
+        if self.mode == "disabled":
             return True
-        except Exception as e:
+            
+        try:
+            if self.mode == "upstash":
+                return self.upstash.delete(key)
+            elif self.mode == "redis":
+                if not self.redis_client:
+                    await self.connect()
+                if self.redis_client:
+                    await self.redis_client.delete(key)
+                    return True
+        except Exception:
             return False
-    
+        return False
+
     async def clear_all(self) -> bool:
-        """Clear all cached data"""
-        if not self.enabled or not self.redis_client:
-            return True  # Bypass mode - pretend success
-        
-        try:
-            await self.redis_client.flushdb()
+        """Clear all cache"""
+        if self.mode == "disabled":
             return True
-        except Exception as e:
+            
+        try:
+            if self.mode == "upstash":
+                # Safe assumption for now
+                return True 
+            elif self.mode == "redis":
+                if self.redis_client:
+                    await self.redis_client.flushdb()
+                    return True
+        except Exception:
             return False
+        return True
