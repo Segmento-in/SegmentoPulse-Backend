@@ -284,3 +284,53 @@ async def get_ingestion_alerts():
         logger.error(f"Error checking ingestion alerts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/quota/stats")
+async def get_quota_stats():
+    """
+    Get API quota usage statistics
+    
+    Tracks usage for:
+    - GNews API (100 calls/day)
+    - NewsAPI (100 calls/day)
+    - NewsData (200 calls/day)
+    - Groq API (30,000 tokens/minute)
+    
+    Returns current usage, remaining quota, and reset times.
+    
+    Example Response:
+        {
+            "success": true,
+            "quotas": {
+                "gnews": {
+                    "limit": 100,
+                    "used": 25,
+                    "remaining": 75,
+                    "reset_time": "2026-02-04T00:00:00"
+                },
+                "groq": {
+                    "limit": "30000 tokens/min",
+                    "used": 1250,
+                    "remaining": 28750,
+                    "reset_time": "2026-02-03T18:20:00"
+                }
+            }
+        }
+    """
+    try:
+        from app.services.api_quota import get_quota_tracker
+        
+        tracker = get_quota_tracker()
+        stats = tracker.get_stats()
+        
+        return {
+            "success": True,
+            "quotas": stats,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting quota stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
