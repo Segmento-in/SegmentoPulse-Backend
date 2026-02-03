@@ -250,10 +250,10 @@ class AppwriteDatabase:
             Tuple[int, List[Dict]]: (count of saved articles, list of saved article data)
         """
         if not self.initialized:
-            return 0
+            return (0, [])
         
         if not articles:
-            return 0
+            return (0, [])
         
         async def save_single_article(article: dict) -> tuple:
             """
