@@ -78,6 +78,10 @@ app.include_router(engagement.router, prefix="/api/engagement", tags=["Engagemen
 from app.routes import search_v2
 app.include_router(search_v2.router, prefix="/api/search", tags=["Search V2"])
 
+# Phase 5: Monitoring and Metrics
+from app.routes import monitoring
+app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
+
 @app.get("/")
 async def root():
     """Root endpoint"""

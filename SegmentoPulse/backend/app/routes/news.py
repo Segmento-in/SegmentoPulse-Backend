@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from app.models import NewsResponse, ErrorResponse
 from app.services.news_aggregator import NewsAggregator
-from app.services.cache_service import CacheService
+from app.services.upstash_cache import get_upstash_cache  # New Upstash cache
 from app.services.appwrite_db import get_appwrite_db
 
 router = APIRouter()
 news_aggregator = NewsAggregator()
-cache_service = CacheService()
+upstash_cache = get_upstash_cache()  # Upstash REST API cache
 appwrite_db = get_appwrite_db()
 
 @router.get("/{category}", response_model=NewsResponse)
@@ -49,7 +49,20 @@ async def get_news_by_category(
         # Build cache key
         cache_key = f"news:{category}:cursor:{cursor or 'first'}:l{limit}"
         
-        # Simple fetch from database (no SWR since Redis is often disabled on HF)
+        # Try Upstash cache first (5 min TTL)
+        if upstash_cache.enabled:
+            cached_data = upstash_cache.get(cache_key)
+            if cached_data:
+                return NewsResponse(
+                    success=True,
+                    category=category,
+                    count=len(cached_data.get('articles', [])),
+                    articles=cached_data.get('articles', []),
+                    cached=True,
+                    source="upstash"
+                )
+        
+        # Cache miss - fetch from database
         # Build query filters with cursor
         queries = CursorPagination.build_query_filters(cursor, category)
         queries.append(Query.limit(limit + 1))  # Fetch one extra to check if more exist
@@ -70,7 +83,7 @@ async def get_news_by_category(
                 last_article.get('$id')
             )
         
-        return NewsResponse(
+        response_data = NewsResponse(
             success=True,
             category=category,
             count=len(articles),
@@ -78,6 +91,16 @@ async def get_news_by_category(
             cached=False,
             source="appwrite"
         )
+        
+        # Cache the result (5 min TTL)
+        if upstash_cache.enabled:
+            upstash_cache.set(
+                cache_key,
+                {"articles": articles, "has_more": has_more, "next_cursor": next_cursor},
+                ttl=300  # 5 minutes
+            )
+        
+        return response_data
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -91,23 +114,26 @@ async def get_rss_feed(provider: str):
     Providers: aws, gcp, azure, ibm, oracle, digitalocean
     """
     try:
-        # Check cache
-        cached_data = await cache_service.get(f"rss:{provider}")
-        if cached_data:
-            return NewsResponse(
-                success=True,
-                category=f"cloud-{provider}",
-                count=len(cached_data),
-                articles=cached_data,
-                cached=True,
-                source="redis"
-            )
+        # Check Upstash cache
+        cache_key = f"rss:{provider}"
+        if upstash_cache.enabled:
+            cached_data = upstash_cache.get(cache_key)
+            if cached_data:
+                return NewsResponse(
+                    success=True,
+                    category=f"cloud-{provider}",
+                    count=len(cached_data),
+                    articles=cached_data,
+                    cached=True,
+                    source="upstash"
+                )
         
         # Fetch RSS
         articles = await news_aggregator.fetch_rss(provider)
         
-        # Cache
-        await cache_service.set(f"rss:{provider}", articles)
+        # Cache in Upstash (10 min TTL for RSS feeds)
+        if upstash_cache.enabled:
+            upstash_cache.set(cache_key, articles, ttl=600)
         
         return NewsResponse(
             success=True,

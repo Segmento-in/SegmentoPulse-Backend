@@ -7,12 +7,41 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from app.services.appwrite_db import get_appwrite_db
 from app.config import settings
+from app.utils.id_generator import generate_article_id, decode_base64_url
 from datetime import datetime, timedelta
 import logging
+import base64
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def resolve_article_id(article_id_or_url: str) -> tuple[str, str]:
+    """
+    Resolve article ID from either:
+    1. Direct Appwrite document ID (32 chars)
+    2. Base64-encoded URL (for backwards compatibility)
+    3. Plain URL
+    
+    Returns:
+        Tuple of (appwrite_doc_id, original_url_or_id)
+    """
+    # If it looks like a valid Appwrite ID (32 alphanumeric chars), use it directly
+    if len(article_id_or_url) == 32 and article_id_or_url.isalnum():
+        return (article_id_or_url, article_id_or_url)
+    
+    # Try to decode as base64 URL (old format)
+    decoded_url = decode_base64_url(article_id_or_url)
+    if decoded_url:
+        # Generate SHA-256 ID from decoded URL
+        doc_id = generate_article_id(decoded_url)
+        logger.debug(f"Decoded base64 URL → SHA-256 ID: {doc_id[:8]}...")
+        return (doc_id, decoded_url)
+    
+    # Assume it's a plain URL, generate ID
+    doc_id = generate_article_id(article_id_or_url)
+    return (doc_id, article_id_or_url)
 
 
 @router.get("/articles/{article_id}/stats")
@@ -20,16 +49,21 @@ async def get_article_stats(article_id: str):
     """
     Get engagement stats for an article.
     
-    Phase 3: Retrieve likes, dislikes, and views.
+    Supports both:
+    - SHA-256 document IDs (32 chars) - NEW
+    - Base64-encoded URLs - OLD (backwards compatible)
     
     Args:
-        article_id: Document ID from Appwrite
+        article_id: Document ID or base64-encoded URL
         
     Returns:
         Article stats (likes, dislikes, views)
     """
     try:
         appwrite_db = get_appwrite_db()
+        
+        # Resolve article ID (handles base64 URLs for backwards compatibility)
+        doc_id, original_input = resolve_article_id(article_id)
         
         # Try regular articles collection first
         collection_id = settings.APPWRITE_COLLECTION_ID
@@ -38,7 +72,7 @@ async def get_article_stats(article_id: str):
             doc = appwrite_db.databases.get_document(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
-                document_id=article_id
+                document_id=doc_id
             )
         except:
             # Try cloud articles collection
@@ -47,13 +81,13 @@ async def get_article_stats(article_id: str):
                 doc = appwrite_db.databases.get_document(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=collection_id,
-                    document_id=article_id
+                    document_id=doc_id
                 )
             else:
                 raise HTTPException(status_code=404, detail="Article not found")
         
         return {
-            "article_id": article_id,
+            "article_id": doc_id,
             "likes": doc.get('likes', 0),
             "dislikes": doc.get('dislikes', 0),
             "views": doc.get('views', 0),
@@ -79,16 +113,19 @@ async def like_article(article_id: str):
     """
     Increment like count for an article.
     
-    Phase 3: Engagement tracking for article popularity.
+    Supports both SHA-256 IDs and base64 URLs.
     
     Args:
-        article_id: Document ID from Appwrite
+        article_id: Document ID or base64-encoded URL
         
     Returns:
         Updated likes count
     """
     try:
         appwrite_db = get_appwrite_db()
+        
+        # Resolve article ID
+        doc_id, _ = resolve_article_id(article_id)
         
         # Try regular articles collection first
         collection_id = settings.APPWRITE_COLLECTION_ID
@@ -97,7 +134,7 @@ async def like_article(article_id: str):
             doc = appwrite_db.databases.get_document(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
-                document_id=article_id
+                document_id=doc_id
             )
         except:
             # Try cloud articles collection
@@ -106,7 +143,7 @@ async def like_article(article_id: str):
                 doc = appwrite_db.databases.get_document(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=collection_id,
-                    document_id=article_id
+                    document_id=doc_id
                 )
             else:
                 raise HTTPException(status_code=404, detail="Article not found")
@@ -119,14 +156,14 @@ async def like_article(article_id: str):
         appwrite_db.databases.update_document(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=collection_id,
-            document_id=article_id,
+            document_id=doc_id,
             data={"likes": new_likes}
         )
         
-        logger.info(f"❤️  Article {article_id[:8]}... liked (total: {new_likes})")
+        logger.info(f"❤️  Article {doc_id[:8]}... liked (total: {new_likes})")
         
         return {
-            "article_id": article_id,
+            "article_id": doc_id,
             "likes": new_likes,
             "success": True
         }
@@ -143,16 +180,19 @@ async def dislike_article(article_id: str):
     """
     Increment dislike count for an article.
     
-    Phase 3: Engagement tracking for article feedback.
+    Supports both SHA-256 IDs and base64 URLs.
     
     Args:
-        article_id: Document ID from Appwrite
+        article_id: Document ID or base64-encoded URL
         
     Returns:
         Updated dislikes count
     """
     try:
         appwrite_db = get_appwrite_db()
+        
+        # Resolve article ID
+        doc_id, _ = resolve_article_id(article_id)
         
         # Try regular articles collection first
         collection_id = settings.APPWRITE_COLLECTION_ID
@@ -161,7 +201,7 @@ async def dislike_article(article_id: str):
             doc = appwrite_db.databases.get_document(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
-                document_id=article_id
+                document_id=doc_id
             )
         except:
             # Try cloud articles collection
@@ -170,7 +210,7 @@ async def dislike_article(article_id: str):
                 doc = appwrite_db.databases.get_document(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=collection_id,
-                    document_id=article_id
+                    document_id=doc_id
                 )
             else:
                 raise HTTPException(status_code=404, detail="Article not found")
@@ -183,14 +223,14 @@ async def dislike_article(article_id: str):
         appwrite_db.databases.update_document(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=collection_id,
-            document_id=article_id,
+            document_id=doc_id,
             data={"dislikes": new_dislikes}
         )
         
-        logger.info(f"👎 Article {article_id[:8]}... disliked (total: {new_dislikes})")
+        logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {new_dislikes})")
         
         return {
-            "article_id": article_id,
+            "article_id": doc_id,
             "dislikes": new_dislikes,
             "success": True
         }
@@ -207,16 +247,19 @@ async def track_view(article_id: str):
     """
     Increment view count for an article.
     
-    Phase 3: Track article views for analytics.
+    Supports both SHA-256 IDs and base64 URLs.
     
     Args:
-        article_id: Document ID from Appwrite
+        article_id: Document ID or base64-encoded URL
         
     Returns:
         Updated views count
     """
     try:
         appwrite_db = get_appwrite_db()
+        
+        # Resolve article ID
+        doc_id, _ = resolve_article_id(article_id)
         
         # Try regular articles collection first
         collection_id = settings.APPWRITE_COLLECTION_ID
@@ -225,7 +268,7 @@ async def track_view(article_id: str):
             doc = appwrite_db.databases.get_document(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
-                document_id=article_id
+                document_id=doc_id
             )
         except:
             # Try cloud articles collection
@@ -234,7 +277,7 @@ async def track_view(article_id: str):
                 doc = appwrite_db.databases.get_document(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=collection_id,
-                    document_id=article_id
+                    document_id=doc_id
                 )
             else:
                 raise HTTPException(status_code=404, detail="Article not found")
@@ -247,16 +290,16 @@ async def track_view(article_id: str):
         appwrite_db.databases.update_document(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=collection_id,
-            document_id=article_id,
+            document_id=doc_id,
             data={"views": new_views}
         )
         
         # Log only every 10 views to avoid spam
         if new_views % 10 == 0:
-            logger.info(f"👁️  Article {article_id[:8]}... reached {new_views} views")
+            logger.info(f"👁️  Article {doc_id[:8]}... reached {new_views} views")
         
         return {
-            "article_id": article_id,
+            "article_id": doc_id,
             "views": new_views,
             "success": True
         }

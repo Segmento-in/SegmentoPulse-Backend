@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # Redis Control (Hotfix: Soft-disable when Redis not available)
     ENABLE_REDIS: bool = False  # Set to True when Redis server is running
     
+    # Upstash Redis (REST API) - Free Tier Optimized
+    # Prefer env vars for production, fallback to defaults for development
+    UPSTASH_REDIS_REST_URL: str = ""  # Set in production secrets
+    UPSTASH_REDIS_REST_TOKEN: str = ""  # Set in production secrets
+    ENABLE_UPSTASH_CACHE: bool = True  # Use Upstash instead of local Redis
+    
     # Cache
     CACHE_TTL: int = 600  # seconds (10 minutes) - Phase 1 optimization
     

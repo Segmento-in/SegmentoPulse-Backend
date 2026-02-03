@@ -40,6 +40,10 @@ GROQ_MIN_INTERVAL = 60.0 / GROQ_RATE_LIMIT  # 10 seconds between calls
 last_groq_call_time = 0.0
 groq_rate_lock = asyncio.Lock()
 
+# Space B Ollama Configuration (for fallback when Groq hits rate limits)
+SPACE_B_OLLAMA_URL = "https://workwithshafisk-segmentopulse-factory.hf.space"
+SPACE_B_TIMEOUT = 30  # seconds (Ollama on CPU is slower than Groq on TPU)
+
 # Timeouts
 AGENT_ANALYSIS_TIMEOUT = 30  # seconds
 VECTOR_UPSERT_TIMEOUT = 15  # seconds
@@ -169,9 +173,24 @@ class PulseAnalyst:
                 
             except Exception as e:
                 error_str = str(e).lower()
+                
+                # Check if it's a rate limit error
                 if '429' in error_str or 'rate limit' in error_str:
+                    logger.warning(f"⚠️  [PulseAnalyst] Groq rate limit hit")
+                    
+                    # Try Space B Ollama fallback
+                    try:
+                        logger.info("🔄 [PulseAnalyst] Falling back to Space B Ollama...")
+                        result = await self._analyze_with_space_b(article_data)
+                        if result and result != article_data.get('description', ''):
+                            logger.success("✅ Space B fallback successful!")
+                            return result
+                    except Exception as space_b_error:
+                        logger.warning(f"⚠️  Space B fallback failed: {space_b_error}")
+                    
+                    # If Space B also fails, retry Groq after backoff
                     if attempt < retries - 1:
-                        logger.warning(f"⚠️ [PulseAnalyst] Rate Limit. Retrying in {delay}s...")
+                        logger.warning(f"⏳ Retrying Groq in {delay}s...")
                         await asyncio.sleep(delay)
                         delay *= 2
                         continue
@@ -180,6 +199,59 @@ class PulseAnalyst:
                 return article_data.get('description', '')
         
         return article_data.get('description', '')
+    
+    async def _analyze_with_space_b(self, article_data: Dict) -> str:
+        """
+        Fallback to Space B Ollama when Groq hits rate limits.
+        
+        Space B runs Ollama on CPU (slower but no rate limits).
+        
+        Args:
+            article_data: Article dict with title, description, url
+            
+        Returns:
+            Analysis text or empty string on failure
+        """
+        import httpx
+        
+        try:
+            title = article_data.get('title', '')[:200]
+            description = article_data.get('description', '')[:500]
+            url = article_data.get('url', '')
+            
+            # Call Space B /process-article endpoint
+            # This is the same endpoint used by ingestion_v2.py
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{SPACE_B_OLLAMA_URL}/process-article",
+                    json={
+                        "url": url,
+                        "title": title,
+                        "content": description
+                    },
+                    timeout=SPACE_B_TIMEOUT
+                )
+                
+                if response.status_code != 200:
+                    logger.warning(f"Space B returned {response.status_code}")
+                    return ""
+                
+                result = response.json()
+                summary = result.get('summary', '')
+                tags = result.get('tags', [])
+                
+                # Format similar to Groq output
+                if summary:
+                    formatted = f"{summary}"
+                    if tags:
+                        formatted += f"\n\nTags: {', '.join(tags[:5])}"
+                    return formatted
+                
+                return ""
+                
+        except Exception as e:
+            logger.error(f"❌ Space B Ollama call failed: {e}")
+            return ""
 
 # Singleton Instances
 _pulse_analyst = PulseAnalyst()
