@@ -188,7 +188,7 @@ _pulse_analyst = PulseAnalyst()
 # Async Queue Worker Pattern
 # ============================================================================
 
- async def _shadow_path_worker():
+async def _shadow_path_worker():
     """
     Background worker that processes the shadow queue serially.
     This runs as a single long-lived task, preventing thundering herd.
