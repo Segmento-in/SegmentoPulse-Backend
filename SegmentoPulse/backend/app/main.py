@@ -74,6 +74,10 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 from app.routes import engagement
 app.include_router(engagement.router, prefix="/api/engagement", tags=["Engagement"])
 
+# Phase 4: Advanced Hybrid Search (V2)
+from app.routes import search_v2
+app.include_router(search_v2.router, prefix="/api/search", tags=["Search V2"])
+
 @app.get("/")
 async def root():
     """Root endpoint"""
