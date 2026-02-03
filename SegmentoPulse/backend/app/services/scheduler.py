@@ -572,32 +572,33 @@ def start_scheduler():
     logger.info("⏰ [SCHEDULER] Initializing background scheduler...")
     logger.info("═" * 80)
     
-    # Job 1: Smart Ingestion - LlamaIndex + Bloom Filter (Phase 1)
-    # This replaces the old fetch_all_news() with improved architecture
-    scheduler.add_job(
-        run_smart_ingestion,
-        trigger=IntervalTrigger(minutes=15),
-        id='smart_ingestion_v2',
-        name='Smart Ingestion - LlamaIndex + Bloom Filter (every 15 min)',
-        replace_existing=True
-    )
-    logger.info("✅ Job #1 Registered: 🔮 Smart Ingestion (Phase 1)")
-    logger.info("   ⏱️  Schedule: Every 15 minutes")
-    logger.info("   📋 Task: Fetch news using LlamaIndex with Bloom Filter deduplication")
-    logger.info("   🎯 Benefits: Robust parsing, URL deduplication, lower memory footprint")
-    
-    # Legacy Job (DISABLED): Old news fetcher
-    # Uncomment below to revert to old implementation if needed
+    # Job 1: Smart Ingestion - TEMPORARILY DISABLED (Debugging)
+    # Re-enable after fixing blocking operations in shadow path
     # scheduler.add_job(
-    #     fetch_all_news,
+    #     run_smart_ingestion,
     #     trigger=IntervalTrigger(minutes=15),
-    #     id='fetch_all_news',
-    #     name='News Fetcher (every 15 min)',
+    #     id='smart_ingestion_v2',
+    #     name='Smart Ingestion - LlamaIndex + Bloom Filter (every 15 min)',
     #     replace_existing=True
     # )
-    # logger.info("✅ Job #1 Registered: 📰 News Fetcher (Legacy)")
-    # logger.info("   ⏱️  Schedule: Every 15 minutes")
-    # logger.info("   📋 Task: Fetch news from all providers and update database")
+    logger.info("⚠️  Smart Ingestion DISABLED (Debugging mode)")
+    logger.info("   📋 Reason: Investigating blocking operations")
+    logger.info("   🔄 Using legacy fetcher as fail-safe")
+    
+    # Legacy Job (RE-ENABLED): Fail-Safe News Fetcher
+    # This is our production-proven fallback while we debug smart ingestion
+    scheduler.add_job(
+        fetch_all_news,
+        trigger=IntervalTrigger(minutes=15),
+        id='fetch_all_news_failsafe',
+        name='News Fetcher FAIL-SAFE (every 15 min)',
+        replace_existing=True
+    )
+    logger.info("")
+    logger.info("✅ Job #1 Registered: 🛡️  Legacy News Fetcher (FAIL-SAFE MODE)")
+    logger.info("   ⏱️  Schedule: Every 15 minutes")
+    logger.info("   📋 Task: Fetch news from all providers (Production-Proven)")
+    logger.info("   🎯 Benefit: Guaranteed ingestion during smart ingestion debugging")
     
     
     # Job 2: Cleanup old news every 30 minutes

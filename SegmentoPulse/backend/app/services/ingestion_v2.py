@@ -36,6 +36,8 @@ logger = get_professional_logger(__name__)
 # ============================================================================
 # Constants
 SPACE_B_URL = "https://workwithshafisk-segmentopulse-factory.hf.space"
+SPACE_B_TIMEOUT = 30  # seconds (Llama-3 is slow on CPU)
+REQUEST_TIMEOUT = 10  # seconds for RSS feed fetching
 
 # Phase 3: Cloud News Categories
 CLOUD_CATEGORIES = [
@@ -107,8 +109,6 @@ def route_to_collection(category: str, config_obj) -> str:
         return config_obj.APPWRITE_CLOUD_COLLECTION_ID
     else:
         return config_obj.APPWRITE_COLLECTION_ID
-
-SPACE_B_TIMEOUT = 30  # seconds (Llama-3 is slow on CPU)
 
 
 # RSS feed URLs for each category
@@ -205,8 +205,12 @@ async def fetch_category_rss(category: str, rss_urls: List[str]) -> List[Documen
         # Fetch each RSS feed
         for url in rss_urls:
             try:
-                # Parse RSS feed with feedparser
-                feed = await asyncio.to_thread(feedparser.parse, url)
+                # Use requests to fetch content with a timeout to prevent feedparser from blocking indefinitely
+                response = await asyncio.to_thread(requests.get, url, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status() # Raise an exception for bad status codes
+                
+                # Parse RSS feed with feedparser using the fetched content
+                feed = await asyncio.to_thread(feedparser.parse, response.content)
                 
                 # Convert each entry to Document
                 for entry in feed.entries:
@@ -219,8 +223,11 @@ async def fetch_category_rss(category: str, rss_urls: List[str]) -> List[Documen
                 
                 logger.debug(f"   ✓ Fetched {len(feed.entries)} articles from {url[:50]}...")
                 
+            except requests.exceptions.RequestException as req_e:
+                logger.warning(f"   ⚠️  Failed to fetch {url} due to network/timeout error: {req_e}")
+                continue
             except Exception as e:
-                logger.warning(f"   ⚠️  Failed to fetch {url}: {e}")
+                logger.warning(f"   ⚠️  Failed to parse {url}: {e}")
                 continue
         
         logger.info(f"   ✅ Total fetched: {len(all_documents)} documents for {category}")
