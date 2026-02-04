@@ -88,28 +88,37 @@ class AppwriteDatabase:
     
     def _generate_url_hash(self, url: str) -> str:
         """
-        Generate a unique hash for an article URL (with canonicalization)
+        Generate a unique hash for an article URL
         
-        Uses canonical URL normalization to catch duplicate stories:
-        - https://cnn.com/story?utm_source=twitter
-        - https://www.cnn.com/story?ref=homepage
-        Both map to same hash!
+        **INTEGRATION FIX #2**: Updated to match frontend ID generation
+        
+        Uses SHA-256 hash of the RAW URL (not canonicalized) to ensure
+        Frontend and Backend generate IDENTICAL IDs for the same article.
+        
+        **WHY THE CHANGE**:
+        - OLD: 16-char hash of canonical URL (different from frontend)
+        - NEW: 32-char hash of raw URL (matches frontend exactly)
+        
+        **NOTE**: Canonicalization is still used for Appwrite deduplication
+        via the unique constraint, but NOT for ID generation.
         
         Args:
-            url: Article URL
+            url: Article URL (raw, not canonicalized)
             
         Returns:
-            16-character hex hash
+            32-character hex hash (Appwrite-compatible, frontend-compatible)
+            
+        Example:
+            >>> _generate_url_hash("https://cnn.com/article?utm=123")
+            "a1b2c3d4e5f67890abcdef1234567890"  # 32 chars
         """
-        from app.utils.url_canonicalization import canonicalize_url
         import hashlib
         
-        # Canonicalize URL first for better deduplication
-        canonical_url = canonicalize_url(url)
+        # Generate SHA-256 hash from RAW URL (no canonicalization for ID)
+        hash_bytes = hashlib.sha256(url.encode('utf-8')).hexdigest()
         
-        # Generate hash from canonical URL
-        hash_bytes = hashlib.sha256(canonical_url.encode('utf-8')).hexdigest()
-        return hash_bytes[:16]  # First 16 characters
+        # Return first 32 characters (matches frontend idGenerator.ts)
+        return hash_bytes[:32]
     
     async def get_articles(self, category: str, limit: int = 20, offset: int = 0) -> List[Dict]:
         """

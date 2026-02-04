@@ -17,6 +17,8 @@ def generate_article_id(url: str) -> str:
     """
     Generate Appwrite-compatible ID from URL
     
+    **INTEGRATION FIX #2**: Matches frontend and appwrite_db.py
+    
     Uses SHA-256 hash truncated to 32 characters to ensure
     it fits within Appwrite's 36-character document ID limit.
     

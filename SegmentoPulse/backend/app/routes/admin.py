@@ -545,3 +545,220 @@ async def preview_newsletter_content(preference: str):
             detail=f"Failed to preview content: {str(e)}"
         )
 
+
+# ===========================================
+# Bloom Filter Management (Integration Fix #1)
+# ===========================================
+
+@router.post("/bloom-filter/reset")
+async def reset_bloom_filter():
+    """
+    Reset Scalable Bloom Filter - Integration Sync Mechanism
+    
+    **USE CASE**: After clearing the Appwrite database, call this endpoint
+    to reset the Bloom Filter to match the empty database state.
+    
+    **WHY THIS IS NEEDED**: 
+    In production (Hugging Face Spaces), the Bloom Filter persists on disk
+    even when the database is cleared via the Appwrite dashboard. This causes
+    100% duplicate detection because the filter "remembers" old URLs that no
+    longer exist in the database.
+    
+    **INTEGRATION CONTRACT**:
+    - When you clear Appwrite DB → Call this endpoint
+    - Filter state syncs with database state
+    - Fresh ingestion can proceed
+    
+    Returns:
+        Status and statistics before/after reset
+    """
+    try:
+        from app.services.deduplication import get_url_filter
+        
+        # Get the global filter instance
+        url_filter = get_url_filter()
+        
+        # Capture stats before reset
+        stats_before = url_filter.get_stats()
+        
+        # Reset the filter
+        url_filter.reset()
+        
+        # Capture stats after reset
+        stats_after = url_filter.get_stats()
+        
+        return {
+            "success": True,
+            "message": "Scalable Bloom Filter reset successfully",
+            "operation": "Integration sync - Filter state now matches empty database",
+            "stats_before_reset": {
+                "total_checks": stats_before['total_checks'],
+                "unique_urls_added": stats_before['unique_urls_added'],
+                "duplicates_detected": stats_before['duplicates_detected'],
+                "filter_buckets": stats_before['filter_buckets'],
+                "estimated_capacity": stats_before['estimated_current_capacity']
+            },
+            "stats_after_reset": {
+                "filter_buckets": stats_after['filter_buckets'],
+                "last_reset": stats_after['last_reset']
+            },
+            "note": "Filter is now ready for fresh ingestion. Next fetch will save all articles."
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset Bloom Filter: {str(e)}"
+        )
+
+
+@router.get("/bloom-filter/stats")
+async def get_bloom_filter_stats():
+    """
+    Get Scalable Bloom Filter statistics - Observability Endpoint
+    
+    Shows:
+    - Total URLs processed
+    - Duplicate detection rate
+    - Filter bucket count (auto-scaling metric)
+    - Memory usage estimate
+    - Last persistence time
+    
+    **PRODUCTION DIAGNOSTIC**: Use this to verify filter state
+    and detect saturation issues.
+    
+    Returns:
+        Comprehensive filter statistics
+    """
+    try:
+        from app.services.deduplication import get_url_filter
+        
+        url_filter = get_url_filter()
+        stats = url_filter.get_stats()
+        
+        # Calculate additional metrics
+        memory_usage = url_filter.get_estimated_memory_usage()
+        
+        return {
+            "success": True,
+            "filter_type": "ScalableBloomFilter (pybloom_live)",
+            "persistence_enabled": True,
+            "persistence_path": url_filter.persistence_path,
+            "statistics": {
+                "total_checks": stats['total_checks'],
+                "unique_urls_added": stats['unique_urls_added'],
+                "duplicates_detected": stats['duplicates_detected'],
+                "duplicate_rate_percent": stats['duplicate_rate_percent'],
+                "filter_buckets": stats['filter_buckets'],
+                "initial_capacity": stats['initial_capacity'],
+                "current_estimated_capacity": stats['estimated_current_capacity'],
+                "error_rate": stats['filter_error_rate'],
+                "is_scalable": stats['is_scalable'],
+                "last_reset": stats['last_reset'],
+                "last_save": stats['last_save']
+            },
+            "memory": {
+                "estimated_usage": memory_usage,
+                "note": "Scalable Bloom Filter auto-grows as needed"
+            },
+            "health": {
+                "status": "healthy" if stats['duplicate_rate_percent'] < 95 else "warning",
+                "warning": "100% duplicate rate detected - consider reset" if stats['duplicate_rate_percent'] >= 99.5 else None
+            }
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get Bloom Filter stats: {str(e)}"
+        )
+
+
+@router.get("/bloom-filter/health")
+async def bloom_filter_health_check():
+    """
+    Quick health check for Bloom Filter - Production Monitoring
+    
+    Returns:
+    - Status: healthy/warning/critical
+    - Reason for any issues
+    - Recommended action
+    
+    **ALERTING**: Use this for automated monitoring.
+    A "critical" status means ingestion is likely broken.
+    """
+    try:
+        from app.services.deduplication import get_url_filter
+        from app.services.appwrite_db import get_appwrite_db
+        import os
+        
+        url_filter = get_url_filter()
+        stats = url_filter.get_stats()
+        appwrite_db = get_appwrite_db()
+        
+        # Check 1: Duplicate rate health
+        duplicate_rate = stats['duplicate_rate_percent']
+        
+        # Check 2: Filter persistence file exists
+        filter_file_exists = os.path.exists(url_filter.persistence_path)
+        
+        # Check 3: Database initialized
+        db_initialized = appwrite_db.initialized
+        
+        # Determine health status
+        issues = []
+        status = "healthy"
+        
+        if duplicate_rate >= 99.5:
+            status = "critical"
+            issues.append({
+                "type": "duplicate_saturation",
+                "severity": "critical",
+                "details": f"Duplicate rate: {duplicate_rate}% (expected < 95%)",
+                "action": "Reset Bloom Filter via POST /admin/bloom-filter/reset"
+            })
+        elif duplicate_rate >= 90:
+            status = "warning"
+            issues.append({
+                "type": "high_duplicates",
+                "severity": "warning",
+                "details": f"Duplicate rate: {duplicate_rate}% (expected < 90%)",
+                "action": "Monitor ingestion logs for validation issues"
+            })
+        
+        if not filter_file_exists:
+            issues.append({
+                "type": "missing_persistence",
+                "severity": "info",
+                "details": "Filter persistence file not found (filter will create on first save)",
+                "action": "No action needed - this is normal on first run"
+            })
+        
+        if not db_initialized:
+            status = "critical"
+            issues.append({
+                "type": "database_disconnected",
+                "severity": "critical",
+                "details": "Appwrite database not initialized",
+                "action": "Check Appwrite credentials in environment variables"
+            })
+        
+        return {
+            "status": status,
+            "timestamp": stats['last_reset'],
+            "checks_performed": {
+                "duplicate_rate": duplicate_rate,
+                "filter_persisted": filter_file_exists,
+                "database_initialized": db_initialized
+            },
+            "issues": issues if issues else [],
+            "recommendation": issues[0]["action"] if issues else "System healthy - all checks passed"
+        }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "recommendation": "Check server logs for detailed error information"
+        }
+

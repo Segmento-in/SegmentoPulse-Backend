@@ -278,8 +278,9 @@ def is_relevant_to_category(article: Union[Dict, 'Article'], category: str) -> b
         return True
     
     # Combine title and description for checking
-    title = article_dict.get('title', '').lower()
-    description = article_dict.get('description', '').lower()
+    # FIX: Use (value or '') pattern to handle explicit None values from messy RSS feeds
+    title = (article_dict.get('title') or '').lower()
+    description = (article_dict.get('description') or '').lower()
     text = f"{title} {description}"
     
     # Count keyword matches
