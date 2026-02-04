@@ -309,7 +309,11 @@ class AppwriteDatabase:
                     'fetched_at': datetime.now().isoformat(),
                     'url_hash': url_hash,
                     'slug': str(get_field(article, 'slug', ''))[:200],
-                    'quality_score': int(get_field(article, 'quality_score', 50))
+                    'quality_score': int(get_field(article, 'quality_score', 50)),
+                    # FIX: Initialize engagement metrics (required by Appwrite schema)
+                    'likes': 0,
+                    'dislike': 0, # Note: Schema uses singular 'dislike' based on error logs/screenshots
+                    'views': 0
                 }
                 
                 # Try to create document
