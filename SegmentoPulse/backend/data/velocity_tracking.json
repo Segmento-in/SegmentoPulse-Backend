@@ -1,0 +1,288 @@
+{
+  "ai": {
+    "interval": 5,
+    "history": [
+      8,
+      23,
+      19,
+      27,
+      11
+    ],
+    "last_fetch": "2026-02-03T19:32:09.550923",
+    "total_fetches": 6,
+    "total_articles": 99
+  },
+  "data-security": {
+    "interval": 15,
+    "history": [
+      7,
+      7,
+      0,
+      23,
+      8
+    ],
+    "last_fetch": "2026-02-03T19:32:09.568065",
+    "total_fetches": 6,
+    "total_articles": 49
+  },
+  "data-governance": {
+    "interval": 15,
+    "history": [
+      5,
+      5,
+      0,
+      12,
+      16
+    ],
+    "last_fetch": "2026-02-03T19:32:09.577797",
+    "total_fetches": 6,
+    "total_articles": 44
+  },
+  "data-privacy": {
+    "interval": 15,
+    "history": [
+      5,
+      4,
+      0,
+      22,
+      22
+    ],
+    "last_fetch": "2026-02-03T19:32:09.589340",
+    "total_fetches": 6,
+    "total_articles": 58
+  },
+  "data-engineering": {
+    "interval": 15,
+    "history": [
+      18,
+      7,
+      12,
+      19,
+      18
+    ],
+    "last_fetch": "2026-02-03T19:32:09.599566",
+    "total_fetches": 6,
+    "total_articles": 91
+  },
+  "data-management": {
+    "interval": 15,
+    "history": [
+      10,
+      10,
+      0,
+      10,
+      10
+    ],
+    "last_fetch": "2026-02-03T19:32:09.608098",
+    "total_fetches": 6,
+    "total_articles": 57
+  },
+  "business-intelligence": {
+    "interval": 5,
+    "history": [
+      14,
+      12,
+      20,
+      28,
+      28
+    ],
+    "last_fetch": "2026-02-03T19:32:09.617911",
+    "total_fetches": 6,
+    "total_articles": 114
+  },
+  "business-analytics": {
+    "interval": 15,
+    "history": [
+      7,
+      7,
+      17,
+      14,
+      23
+    ],
+    "last_fetch": "2026-02-03T19:32:09.623730",
+    "total_fetches": 6,
+    "total_articles": 82
+  },
+  "customer-data-platform": {
+    "interval": 5,
+    "history": [
+      26,
+      9,
+      17,
+      18,
+      26
+    ],
+    "last_fetch": "2026-02-03T19:32:09.629055",
+    "total_fetches": 6,
+    "total_articles": 105
+  },
+  "data-centers": {
+    "interval": 5,
+    "history": [
+      26,
+      17,
+      19,
+      18,
+      19
+    ],
+    "last_fetch": "2026-02-03T19:32:09.632019",
+    "total_fetches": 6,
+    "total_articles": 106
+  },
+  "cloud-computing": {
+    "interval": 5,
+    "history": [
+      25,
+      25,
+      0,
+      26,
+      28
+    ],
+    "last_fetch": "2026-02-03T19:32:09.635165",
+    "total_fetches": 6,
+    "total_articles": 128
+  },
+  "magazines": {
+    "interval": 60,
+    "history": [
+      10,
+      0,
+      10,
+      0,
+      0
+    ],
+    "last_fetch": "2026-02-03T19:32:09.639334",
+    "total_fetches": 6,
+    "total_articles": 30
+  },
+  "data-laws": {
+    "interval": 5,
+    "history": [
+      30,
+      10,
+      20,
+      30,
+      20
+    ],
+    "last_fetch": "2026-02-03T19:32:09.642948",
+    "total_fetches": 6,
+    "total_articles": 140
+  },
+  "cloud-aws": {
+    "interval": 5,
+    "history": [
+      29,
+      29,
+      20,
+      29,
+      20
+    ],
+    "last_fetch": "2026-02-03T19:32:09.648035",
+    "total_fetches": 6,
+    "total_articles": 155
+  },
+  "cloud-azure": {
+    "interval": 15,
+    "history": [
+      20,
+      10,
+      10,
+      20,
+      10
+    ],
+    "last_fetch": "2026-02-03T19:32:09.651400",
+    "total_fetches": 6,
+    "total_articles": 90
+  },
+  "cloud-gcp": {
+    "interval": 5,
+    "history": [
+      20,
+      20,
+      20,
+      20,
+      20
+    ],
+    "last_fetch": "2026-02-03T19:32:09.656098",
+    "total_fetches": 6,
+    "total_articles": 120
+  },
+  "cloud-oracle": {
+    "interval": 60,
+    "history": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "last_fetch": "2026-02-03T19:32:09.660115",
+    "total_fetches": 6,
+    "total_articles": 0
+  },
+  "cloud-ibm": {
+    "interval": 60,
+    "history": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "last_fetch": "2026-02-03T19:32:09.664522",
+    "total_fetches": 6,
+    "total_articles": 0
+  },
+  "cloud-alibaba": {
+    "interval": 60,
+    "history": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "last_fetch": "2026-02-03T19:32:09.668251",
+    "total_fetches": 6,
+    "total_articles": 0
+  },
+  "cloud-digitalocean": {
+    "interval": 60,
+    "history": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "last_fetch": "2026-02-03T19:32:09.672038",
+    "total_fetches": 6,
+    "total_articles": 0
+  },
+  "cloud-huawei": {
+    "interval": 60,
+    "history": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "last_fetch": "2026-02-03T19:32:09.675285",
+    "total_fetches": 6,
+    "total_articles": 0
+  },
+  "cloud-cloudflare": {
+    "interval": 5,
+    "history": [
+      20,
+      20,
+      20,
+      20,
+      20
+    ],
+    "last_fetch": "2026-02-03T19:32:09.678331",
+    "total_fetches": 6,
+    "total_articles": 120
+  }
+}

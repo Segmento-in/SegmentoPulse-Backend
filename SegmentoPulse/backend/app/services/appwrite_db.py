@@ -27,6 +27,11 @@ import hashlib
 import asyncio # For parallel writes
 from app.models import Article
 from app.config import settings
+import logging
+
+# Configure logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class AppwriteDatabase:
@@ -256,13 +261,15 @@ class AppwriteDatabase:
             articles: List of article dicts (already sanitized and validated)
         
         Returns:
-            Tuple[int, List[Dict]]: (count of saved articles, list of saved article data)
+            Tuple[int, int, int, List[Dict]]: (saved_count, duplicate_count, error_count, saved_docs)
         """
+        logger = logging.getLogger(__name__)
+        
         if not self.initialized:
-            return (0, [])
+            return (0, 0, 0, [])
         
         if not articles:
-            return (0, [])
+            return (0, 0, 0, [])
         
         async def save_single_article(article: dict) -> tuple:
             """
@@ -320,6 +327,7 @@ class AppwriteDatabase:
                 if 'document_already_exists' in str(e).lower() or 'unique' in str(e).lower():
                     return ('duplicate', None)
                 else:
+                    logger.error(f"❌ Appwrite Write Error: {str(e)} | URL: {url[:100]}...")
                     return ('error', str(e))
                     
             except Exception as e:
@@ -351,10 +359,10 @@ class AppwriteDatabase:
             else:  # error
                 error_count += 1
         
-        if saved_count > 0 or duplicate_count > 0:
-            print(f"[WRITE] Parallel write: {saved_count} saved, {duplicate_count} duplicates, {error_count} errors")
+        if saved_count > 0 or duplicate_count > 0 or error_count > 0:
+            logger.info(f"[WRITE] Parallel write: {saved_count} saved, {duplicate_count} duplicates, {error_count} errors")
         
-        return saved_count, saved_documents
+        return saved_count, duplicate_count, error_count, saved_documents
     
     async def delete_old_articles(self, days: int = 30) -> int:
         """

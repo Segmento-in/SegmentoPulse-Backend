@@ -118,20 +118,27 @@ async def fetch_all_news():
         try:
             # Save to Appwrite database (L2)
             logger.info("💾 Saving %d articles for %s...", len(articles), category.upper())
-            saved_count, saved_docs = await appwrite_db.save_articles(articles)
-
+            saved_count, duplicate_count, error_count, saved_docs = await appwrite_db.save_articles(articles)
+            
             # 🚀 FIRE-AND-FORGET: Trigger Agentic Shadow Path
             # We do NOT wait for this. It runs in the background.
             if saved_docs:
                 logger.info("🕵️ Triggering Agent Analyst for %d new articles...", len(saved_docs))
                 asyncio.create_task(process_shadow_path(saved_docs))
             
-            # Calculate duplicates
-            duplicates = len(articles) - saved_count
+            # Calculate duplicates (Now explicitly returned by appwrite_db)
+            # duplicates = len(articles) - saved_count  <-- OLD BUGGY LOGIC
+            # Now we use the explicit counts from the DB service
             
             total_fetched += len(articles)
             total_saved += saved_count
-            total_duplicates += duplicates
+            total_duplicates += duplicate_count
+            
+            # If there were errors, add them to total errors
+            if error_count > 0:
+                total_errors += 1 # Count category as having errors, but we also want to know how many articles failed
+                logger.error(f"❌ {error_count} articles failed to save in {category}")
+            
             total_invalid += invalid_count
             total_irrelevant += irrelevant_count  # NEW
             
@@ -139,7 +146,8 @@ async def fetch_all_news():
             category_stats[category] = {
                 'fetched': len(articles),
                 'saved': saved_count,
-                'duplicates': duplicates,
+                'duplicates': duplicate_count,
+                'errors': error_count,
                 'invalid': invalid_count,
                 'irrelevant': irrelevant_count  # NEW
             }
@@ -151,8 +159,8 @@ async def fetch_all_news():
             except Exception as e:
                 logger.debug("⚠️  Redis unavailable: %s", e)
             
-            logger.info("✅ %s: %d fetched, %d saved, %d duplicates, %d invalid", 
-                       category.upper(), len(articles), saved_count, duplicates, invalid_count)
+            logger.info("✅ %s: %d fetched, %d saved, %d duplicates, %d errors, %d invalid", 
+                       category.upper(), len(articles), saved_count, duplicate_count, error_count, invalid_count)
                        
         except Exception as e:
             total_errors += 1
@@ -345,7 +353,7 @@ async def run_smart_ingestion():
                 
                 # Save to Appwrite database (L2)
                 logger.info("💾 Saving %d articles for %s...", len(articles), category.upper())
-                saved_count, saved_docs = await appwrite_db.save_articles(articles)
+                saved_count, duplicate_count, error_count, saved_docs = await appwrite_db.save_articles(articles)
                 
                 # 🚀 FIRE-AND-FORGET: Trigger Agentic Shadow Path
                 if saved_docs:
