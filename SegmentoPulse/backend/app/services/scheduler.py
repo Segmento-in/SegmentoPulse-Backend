@@ -609,14 +609,14 @@ def start_scheduler():
     # This is our production-proven fallback while we debug smart ingestion
     scheduler.add_job(
         fetch_all_news,
-        trigger=IntervalTrigger(minutes=15),
+        trigger=IntervalTrigger(hours=1),
         id='fetch_all_news_failsafe',
-        name='News Fetcher FAIL-SAFE (every 15 min)',
+        name='News Fetcher FAIL-SAFE (every 1 hour)',
         replace_existing=True
     )
     logger.info("")
     logger.info("✅ Job #1 Registered: 🛡️  Legacy News Fetcher (FAIL-SAFE MODE)")
-    logger.info("   ⏱️  Schedule: Every 15 minutes")
+    logger.info("   ⏱️  Schedule: Every 1 hour")
     logger.info("   📋 Task: Fetch news from all providers (Production-Proven)")
     logger.info("   🎯 Benefit: Guaranteed ingestion during smart ingestion debugging")
     
