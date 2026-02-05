@@ -75,8 +75,30 @@ class AppwriteDatabase:
             print(f"Database ID: {settings.APPWRITE_DATABASE_ID}")
             print(f"Collection ID: {settings.APPWRITE_COLLECTION_ID}")
             print("-" * 80)
+            print("-" * 80)
             print("")
             print("")
+            
+            # Future-Proofing Wrapper (Migration Phase)
+            # Wraps legacy 'documents' API into new 'tables' nomenclature
+            class TablesDBWrapper:
+                def __init__(self, db_service):
+                    self.db = db_service
+                
+                def create_row(self, *args, **kwargs):
+                    return self.db.create_document(*args, **kwargs)
+                    
+                def get_row(self, *args, **kwargs):
+                    return self.db.get_document(*args, **kwargs)
+                
+                def list_rows(self, *args, **kwargs):
+                    return self.db.list_documents(*args, **kwargs)
+
+                def delete_row(self, *args, **kwargs):
+                     # Mapping delete_document -> delete_row if needed
+                    return self.db.delete_document(*args, **kwargs)
+            
+            self.tablesDB = TablesDBWrapper(self.databases)
             
         except Exception as e:
             print("")
@@ -160,7 +182,7 @@ class AppwriteDatabase:
             ]
             
             # Query with projection
-            response = self.databases.list_documents(
+            response = self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[
@@ -214,7 +236,7 @@ class AppwriteDatabase:
             return []
         
         try:
-            response = self.databases.list_documents(
+            response = self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=queries
@@ -317,7 +339,7 @@ class AppwriteDatabase:
                 }
                 
                 # Try to create document
-                self.databases.create_document(
+                self.tablesDB.create_row(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=settings.APPWRITE_COLLECTION_ID,
                     document_id=url_hash,
@@ -385,7 +407,7 @@ class AppwriteDatabase:
             cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
             
             # Query old articles
-            response = self.databases.list_documents(
+            response = self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[
@@ -397,7 +419,7 @@ class AppwriteDatabase:
             deleted_count = 0
             for doc in response['documents']:
                 try:
-                    self.databases.delete_document(
+                    self.tablesDB.delete_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=settings.APPWRITE_COLLECTION_ID,
                         document_id=doc['$id']
@@ -429,7 +451,7 @@ class AppwriteDatabase:
         
         try:
             # Get total count
-            total_response = self.databases.list_documents(
+            total_response = self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[Query.limit(1)]
@@ -446,7 +468,7 @@ class AppwriteDatabase:
             
             articles_by_category = {}
             for category in categories:
-                response = self.databases.list_documents(
+                response = self.tablesDB.list_rows(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=settings.APPWRITE_COLLECTION_ID,
                     queries=[

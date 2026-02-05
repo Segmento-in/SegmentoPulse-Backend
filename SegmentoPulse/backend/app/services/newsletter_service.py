@@ -55,86 +55,120 @@ PREFERENCE_CONFIG = {
 
 async def get_newsletter_content(preference: str) -> List[Dict]:
     """
-    Fetch articles from Appwrite database with timezone-aware queries.
+    Fetch articles using "Category Carousel" (Round-Robin) Logic.
     
-    Critical: Converts IST trigger time to UTC for database queries since
-    Appwrite stores all timestamps in UTC format.
-    
-    Returns empty list if no articles found (caller must check before sending).
+    Strategy:
+    1. Primary Slots: Fetch top articles from AI, Cloud, Data Engineering (2 each).
+    2. Wildcard Slot: Fetch 1 random article from other categories.
+    3. Time Window: Apply strict time filtering (Morning/Afternoon/Evening).
+    4. Fallback: If primary empty, fill with others to reach 5 articles.
     """
+    from appwrite.query import Query
+    import random
+    
     if preference not in PREFERENCE_CONFIG:
         print(f"❌ Invalid preference: {preference}")
         return []
     
     config = PREFERENCE_CONFIG[preference]
+    appwrite_db = get_appwrite_db()
+    
+    if not appwrite_db.initialized:
+        print("⚠️ Appwrite database not initialized")
+        return []
     
     try:
-        # Step 1: Convert IST "now" to UTC for database query
+        # Step 1: Calculate Time Windows (Keep existing logic)
         now_ist = datetime.now(IST)
-        now_utc = now_ist.astimezone(UTC)
         
-        # Step 2: Calculate time range based on preference
-        if "hours_back" in config:
-            time_cutoff = now_utc - timedelta(hours=config["hours_back"])
-        else:  # days_back for Weekly/Monthly
-            time_cutoff = now_utc - timedelta(days=config["days_back"])
+        # Default defaults
+        start_time = now_ist - timedelta(hours=24)
+        end_time = now_ist
         
-        print(f"🔍 Fetching {preference} newsletter articles...")
-        print(f"   Time range: {time_cutoff.isoformat()} to {now_utc.isoformat()} (UTC)")
+        if preference == "Morning":
+            end_time = now_ist  
+            start_time = now_ist - timedelta(hours=8)
+        elif preference == "Afternoon":
+            end_time = now_ist 
+            start_time = now_ist - timedelta(hours=7)
+        elif preference == "Evening":
+            end_time = now_ist
+            start_time = now_ist - timedelta(hours=5)
+        elif preference == "Weekly":
+            end_time = now_ist
+            start_time = now_ist - timedelta(days=7)
+        elif preference == "Monthly":
+            end_time = now_ist
+            start_time = now_ist - timedelta(days=30)
+
+        start_utc = start_time.astimezone(UTC)
+        end_utc = end_time.astimezone(UTC)
         
-        # Step 3: Query Appwrite database
-        appwrite_db = get_appwrite_db()
+        print(f"🔍 Fetching {preference} (Round-Robin)...")
+        print(f"   Window (UTC): {start_utc.isoformat()} to {end_utc.isoformat()}")
+
+        # Step 2: Define Categories
+        primary_categories = ["ai", "cloud-computing", "data-engineering"]
+        wildcard_categories = [
+            "data-security", "data-privacy", "business-intelligence", 
+            "magazines", "data-centers"
+        ]
         
-        if not appwrite_db.initialized:
-            print("⚠️ Appwrite database not initialized")
-            return []
+        selected_articles = []
+        seen_urls = set()
+
+        async def fetch_category(cat, limit):
+            queries = [
+                Query.equal('category', cat),
+                Query.greater_than_equal('published_at', start_utc.isoformat()),
+                Query.less_than_equal('published_at', end_utc.isoformat()),
+                Query.order_desc('published_at'), # Fallback sort since we lack engagement metrics
+                Query.limit(limit)
+            ]
+            return await appwrite_db.get_articles_with_queries(queries)
+
+        # Step 3: Fetch Primary Slots (2 each)
+        for cat in primary_categories:
+            articles = await fetch_category(cat, 2)
+            for a in articles:
+                if a['url'] not in seen_urls:
+                    selected_articles.append(a)
+                    seen_urls.add(a['url'])
         
-        # Fetch all articles (Appwrite stores them with UTC timestamps)
-        all_articles = await appwrite_db.get_all_articles()
-        
-        if not all_articles:
-            print("⚠️ No articles found in Appwrite database")
-            return []
-        
-        # Step 4: Filter by time range and sort by recency
-        filtered_articles = []
-        for article in all_articles:
-            published_at_str = article.get('publishedAt')
-            if not published_at_str:
-                continue
-            
-            try:
-                # Parse UTC timestamp from database
-                published_at = datetime.fromisoformat(
-                    published_at_str.replace('Z', '+00:00')
-                )
+        # Step 4: Fetch Wildcard Slot (1 random category)
+        random_wildcard = random.choice(wildcard_categories)
+        wild_articles = await fetch_category(random_wildcard, 2) # Fetch 2 just in case
+        for a in wild_articles:
+            if a['url'] not in seen_urls and len(selected_articles) < 5:
+                selected_articles.append(a)
+                seen_urls.add(a['url'])
+                break # Just 1 wildcard needed usually
                 
-                # Convert to UTC-aware datetime if not already
-                if published_at.tzinfo is None:
-                    published_at = UTC.localize(published_at)
-                else:
-                    published_at = published_at.astimezone(UTC)
-                
-                # Check if within time range
-                if published_at >= time_cutoff:
-                    filtered_articles.append(article)
+        # Step 5: Fallback / Fill Up
+        # If we don't have 5 articles yet, scan other categories to fill up
+        if len(selected_articles) < 5:
+            print("⚠️ Primary slots underfilled, running fallback fill...")
+            remaining_cats = list(set(wildcard_categories) - {random_wildcard})
+            for cat in remaining_cats:
+                if len(selected_articles) >= 5:
+                    break
+                fillers = await fetch_category(cat, 2)
+                for a in fillers:
+                    if a['url'] not in seen_urls:
+                        selected_articles.append(a)
+                        seen_urls.add(a['url'])
+                        if len(selected_articles) >= 5:
+                            break
+                            
+        # Final Limit
+        final_list = selected_articles[:5]
+        
+        print(f"✅ Selected {len(final_list)} articles (Round-Robin)")
+        for a in final_list:
+            print(f"   - [{a.get('category')}] {a.get('title')[:40]}...")
             
-            except (ValueError, AttributeError) as e:
-                print(f"⚠️ Error parsing date for article: {e}")
-                continue
-        
-        # Step 5: Sort by date (most recent first) and limit
-        filtered_articles.sort(
-            key=lambda x: x.get('publishedAt', ''),
-            reverse=True
-        )
-        
-        limited_articles = filtered_articles[:config["max_articles"]]
-        
-        print(f"✅ Found {len(filtered_articles)} articles, returning top {len(limited_articles)}")
-        
-        return limited_articles
-    
+        return final_list
+
     except Exception as e:
         print(f"❌ Error fetching newsletter content: {e}")
         import traceback

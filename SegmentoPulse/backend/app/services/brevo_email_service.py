@@ -264,20 +264,61 @@ class BrevoEmailService:
                 
                 unsubscribe_link = self.generate_unsubscribe_link(token)
                 
-                # Build articles HTML
+                # Build Medium-Style Articles HTML
                 articles_html = ""
-                for article in articles[:10]:  # Top 10 articles
+                first_headline = ""
+                
+                for index, article in enumerate(articles[:5]):
+                    title = article.get('title', 'Article')
+                    url = article.get('url', '#')
+                    # Truncate to 160 chars
+                    desc = article.get('description', '')
+                    if desc and len(desc) > 160:
+                        desc = desc[:160] + "..."
+                        
+                    source = article.get('source', 'Segmento')
+                    category = article.get('category', 'Technology').lower()
+                    
+                    # Capture first headline for preview text
+                    if index == 0:
+                        first_headline = title
+                    
+                    # Color Mapping for Categories
+                    tag_color = "#666666" # Default Gray
+                    if "ai" in category: tag_color = "#7c3aed" # Violet/Purple
+                    elif "cloud" in category: tag_color = "#2563eb" # Blue
+                    elif "data" in category: tag_color = "#16a34a" # Green
+                    elif "security" in category: tag_color = "#dc2626" # Red
+                    
+                    # Capitalize for display
+                    cat_display = category.replace('-', ' ').title()
+                    
                     articles_html += f"""
-                    <div style="margin: 20px 0; padding: 15px; background: white; border-radius: 8px;">
-                        <h3 style="margin: 0 0 10px 0;">
-                            <a href="{article.get('url', '#')}" style="color: #667eea; text-decoration: none;">
-                                {article.get('title', 'Article')}
+                    <div style="margin-bottom: 40px; padding-bottom: 30px; border-bottom: 1px solid #eeeeee;">
+                        <!-- Category Tag -->
+                        <div style="font-size: 11px; font-weight: 700; color: {tag_color}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                            {cat_display}
+                        </div>
+                        
+                        <!-- Headline -->
+                        <h3 style="margin: 0 0 10px 0; font-family: 'Georgia', serif; font-size: 22px; line-height: 1.3; font-weight: 400;">
+                            <a href="{url}" style="color: #292929; text-decoration: none;">
+                                {title}
                             </a>
                         </h3>
-                        <p style="color: #666; margin: 0;">{article.get('description', '')[:200]}...</p>
-                        <p style="margin: 10px 0 0 0; font-size: 12px; color: #999;">
-                            {article.get('source', 'Unknown')} • {article.get('publishedAt', '')}
+                        
+                        <!-- Summary -->
+                        <p style="color: #555555; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.5; margin: 0 0 15px 0;">
+                            {desc}
                         </p>
+                        
+                        <!-- Metadata + CTA -->
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span style="font-size: 12px; color: #999;">{source}</span>
+                            <a href="{url}" style="font-size: 13px; color: {tag_color}; text-decoration: none; font-weight: 600;">
+                                Read full story →
+                            </a>
+                        </div>
                     </div>
                     """
                 
@@ -293,30 +334,45 @@ class BrevoEmailService:
                     <html>
                     <head>
                         <meta charset="UTF-8">
-                        <style>
-                            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; background: #f9f9f9; }}
-                            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
-                            .content {{ padding: 30px; }}
-                            .footer {{ padding: 20px; text-align: center; font-size: 12px; color: #666; background: #f0f0f0; }}
-                        </style>
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>{subject}</title>
                     </head>
-                    <body>
-                        <div class="header">
-                            <h1>{preference} Newsletter</h1>
+                    <body style="margin: 0; padding: 0; background-color: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+                        
+                        <!-- Preview Text Hack (Hidden) -->
+                        <div style="display: none; max-height: 0px; overflow: hidden;">
+                            {first_headline} - Read more in today's Pulse Digest.
                         </div>
-                        <div class="content">
-                            <h2>Hi {name},</h2>
-                            <p>{greeting}</p>
+
+                        <div style="max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+                            
+                            <!-- Minimal Header -->
+                            <div style="text-align: center; margin-bottom: 50px; border-bottom: 2px solid #000; padding-bottom: 20px;">
+                                <img src="https://segmento.in/logo-square.png" alt="Segmento" style="width: 40px; height: 40px; margin-bottom: 10px;">
+                                <div style="font-family: 'Georgia', serif; font-size: 28px; font-weight: 700; color: #000;">
+                                    Pulse Digest
+                                </div>
+                                <div style="font-size: 14px; color: #666; margin-top: 5px;">
+                                    {preference} Edition • {datetime.now().strftime('%B %d, %Y')}
+                                </div>
+                            </div>
+
+                            <!-- Greeting -->
+                            <div style="margin-bottom: 40px; font-family: 'Georgia', serif; font-size: 18px; color: #333; font-style: italic;">
+                                Hi {name}, {greeting.lower()}
+                            </div>
+
+                            <!-- Articles Loop -->
                             {articles_html}
-                            <p style="text-align: center; margin-top: 30px;">
-                                <a href="https://segmento.in/pulse" style="background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">
-                                    Read More on SegmentoPulse →
-                                </a>
-                            </p>
-                        </div>
-                        <div class="footer">
-                            <p><a href="{unsubscribe_link}" style="color: #667eea;">Unsubscribe</a> | <a href="https://segmento.in" style="color: #667eea;">Visit Website</a></p>
-                            <p>© 2026 Segmento. All rights reserved.</p>
+                            
+                            <!-- Footer -->
+                            <div style="text-align: center; margin-top: 60px; padding-top: 30px; border-top: 1px solid #eee; color: #888; font-size: 12px;">
+                                <p style="margin-bottom: 15px;">
+                                    Curated by Segmento AI
+                                </p>
+                                <a href="https://segmento.in/pulse" style="color: #888; text-decoration: underline; margin: 0 10px;">Visit Pulse</a>
+                                <a href="{unsubscribe_link}" style="color: #888; text-decoration: underline; margin: 0 10px;">Unsubscribe</a>
+                            </div>
                         </div>
                     </body>
                     </html>
