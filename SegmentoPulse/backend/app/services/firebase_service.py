@@ -27,10 +27,31 @@ class FirebaseService:
         try:
             # Priority 1: Try initializing from Environment Variable (JSON String)
             # This is common for Hugging Face Spaces / Cloud deployments
+            # Priority 1: Try initializing from Environment Variable (JSON String)
             if hasattr(settings, 'FIREBASE_CREDENTIALS') and settings.FIREBASE_CREDENTIALS:
+                print(f"Checking FIREBASE_CREDENTIALS env var (Length: {len(settings.FIREBASE_CREDENTIALS)})")
                 try:
                     import json
-                    cred_dict = json.loads(settings.FIREBASE_CREDENTIALS)
+                    cred_content = settings.FIREBASE_CREDENTIALS
+                    
+                    # Handle potential double-escaped strings common in some environments
+                    if isinstance(cred_content, str):
+                        # Try initial load
+                        try:
+                            cred_dict = json.loads(cred_content)
+                            # If it was a stringified JSON string (double encoded), load again
+                            if isinstance(cred_dict, str):
+                                print("Detected double-encoded JSON string, parsing again...")
+                                cred_dict = json.loads(cred_dict)
+                        except json.JSONDecodeError as json_parse_err:
+                            print(f"JSON Parse Error: {json_parse_err}")
+                            print("Attempting to fix newlines in private key...")
+                            # Common fix for private keys with literal \n
+                            cred_content = cred_content.replace('\\n', '\n')
+                            cred_dict = json.loads(cred_content)
+                    else:
+                        cred_dict = cred_content
+
                     cred = credentials.Certificate(cred_dict)
                     
                     # check if already initialized to prevent error
@@ -41,10 +62,12 @@ class FirebaseService:
                         
                     self.db_ref = db.reference('pulse/article_views')
                     self.initialized = True
-                    print("Firebase initialized successfully from Environment Variable")
+                    print("✅ Firebase initialized successfully from Environment Variable")
                     return
                 except Exception as json_err:
-                    print(f"Error initializing from FIREBASE_CREDENTIALS: {json_err}")
+                    print(f"❌ Error initializing from FIREBASE_CREDENTIALS: {json_err}")
+                    import traceback
+                    traceback.print_exc()
                     # Fallthrough to file check if this fails
 
             # Priority 2: Check if credentials file exists

@@ -173,17 +173,22 @@ async def unsubscribe(
         )
 
 
+class UnsubscribeRequest(BaseModel):
+    email: EmailStr
+    preference: Optional[str] = None
+
 @router.post("/unsubscribe", response_model=UnsubscribeResponse)
-async def unsubscribe_post(email: EmailStr):
+async def unsubscribe_post(request: UnsubscribeRequest):
     """
-    Unsubscribe via email address (for forms)
+    Unsubscribe via email address (for forms/dashboard)
+    Supports Granular Unsubscribe
     """
     try:
         firebase = get_firebase_service()
         brevo = get_brevo_service()
         
         # Get subscriber
-        subscriber = firebase.get_subscriber(email)
+        subscriber = firebase.get_subscriber(request.email)
         
         if not subscriber:
             raise HTTPException(
@@ -192,9 +197,19 @@ async def unsubscribe_post(email: EmailStr):
             )
         
         name = subscriber.get('name', 'Subscriber')
+        email = request.email
         
-        # Update status
-        success = firebase.update_subscriber_status(email, subscribed=False)
+        success = False
+        message = ""
+        
+        if request.preference:
+            # GRANULAR UNSUBSCRIBE
+            success = firebase.update_subscription_status(email, request.preference, False)
+            message = f"Successfully unsubscribed from {request.preference}"
+        else:
+             # GLOBAL UNSUBSCRIBE
+            success = firebase.update_subscriber_status(email, subscribed=False)
+            message = "Successfully unsubscribed from all newsletters"
         
         if not success:
             raise HTTPException(
@@ -203,11 +218,15 @@ async def unsubscribe_post(email: EmailStr):
             )
         
         # Send confirmation
-        brevo.send_unsubscribe_confirmation(email, name)
+        # Only send email if global unsubscribe (to avoid spamming on toggle off)
+        # OR we could send a specific one. For dashboard usage, maybe silent is better?
+        # Let's keep it consistent: send confirmation.
+        if not request.preference:
+            brevo.send_unsubscribe_confirmation(email, name)
         
         return UnsubscribeResponse(
             success=True,
-            message="Successfully unsubscribed",
+            message=message,
             email=email
         )
         
