@@ -130,7 +130,10 @@ class FirebaseService:
     # Subscriber Management Methods
     
     def add_subscriber(self, email: str, subscriber_data: dict) -> bool:
-        """Add a new subscriber to database"""
+        """
+        Add or Update subscriber in database
+        Now supports merging 'subscriptions' for multi-preference support
+        """
         if not self.initialized:
             return False
         
@@ -142,8 +145,43 @@ class FirebaseService:
             subscribers_ref = db.reference('pulse/subscribers')
             subscriber_ref = subscribers_ref.child(email_hash)
             
-            subscriber_ref.set(subscriber_data)
-            return True
+            # Check if subscriber already exists
+            existing_data = subscriber_ref.get()
+            
+            if existing_data:
+                # MERGE LOGIC: Keep existing subscriptions, add new one
+                new_pref = subscriber_data.get('preference')
+                
+                # Initialize subscriptions dict if missing (migration)
+                existing_subs = existing_data.get('subscriptions', {})
+                
+                # If legacy 'preference' exists, map it to subscriptions
+                if not existing_subs and existing_data.get('preference'):
+                    existing_subs[existing_data.get('preference')] = True
+                
+                # Add the new preference
+                if new_pref:
+                    existing_subs[new_pref] = True
+                
+                # Update the data
+                updates = {
+                    'subscriptions': existing_subs,
+                    'subscribed': True, # Re-activate if was unsubscribed
+                    'unsubscribedAt': None,
+                    'lastUpdated': datetime.now().isoformat()
+                }
+                # Update specific fields without overwriting everything
+                subscriber_ref.update(updates)
+                return True
+            else:
+                # NEW SUBSCRIBER
+                # Convert single 'preference' to 'subscriptions' map
+                pref = subscriber_data.get('preference', 'Weekly')
+                subscriber_data['subscriptions'] = {pref: True}
+                
+                subscriber_ref.set(subscriber_data)
+                return True
+                
         except Exception as e:
             print(f"Error adding subscriber: {e}")
             return False
@@ -238,17 +276,8 @@ class FirebaseService:
     
     def get_subscribers_by_preference(self, preference: str) -> list:
         """
-        Get all subscribers filtered by newsletter preference (SERVER-SIDE FILTER)
-        
-        PERFORMANCE OPTIMIZATION:
-        - OLD: Fetch ALL subscribers → Filter in Python → O(N) memory
-        - NEW: Firebase server-side filter → Only returns matches → O(matched) memory
-        
-        FAIRNESS FIX:
-        - Sorts by 'lastSentAt' (oldest first) to ensure ROTATION
-        - Prevents "unlucky subscriber" problem where last N never get emails
-        
-        This prevents memory issues when subscriber count grows to 10K+
+        Get all subscribers filtered by newsletter preference
+        Supports NEW 'subscriptions' map and LEGACY 'preference' string
         """
         if not self.initialized:
             return []
@@ -256,50 +285,45 @@ class FirebaseService:
         try:
             subscribers_ref = db.reference('pulse/subscribers')
             
-            # SERVER-SIDE FILTER: Only fetch subscribers with matching preference
-            # This uses Firebase's indexing to avoid loading all data
-            query = subscribers_ref.order_by_child('preference').equal_to(preference)
-            filtered_subscribers = query.get()
+            # NOTE: Firebase RTDB only supports sorting/filtering on ONE key.
+            # We can't efficiently query "subscriptions/Morning == True" AND "subscriptions/Afternoon == True" effectively without multiple indexes.
+            # Given the dataset size (< 10k), fetching all and filtering in memory is acceptable for now.
+            # Later we can add `.indexOn: ["subscriptions/Morning", "subscriptions/Afternoon"]` to rules.
             
-            if not filtered_subscribers:
+            # Fetch all subscribers (simpler and safer for mixed schema)
+            all_subscribers = subscribers_ref.get()
+            
+            if not all_subscribers:
                 return []
             
-            # Convert to list and filter for active subscriptions only
-            subscribers = []
-            for subscriber_id, subscriber_data in filtered_subscribers.items():
-                # Only include active subscribers
-                if subscriber_data.get('subscribed', True):
-                    subscribers.append(subscriber_data)
+            matched_subscribers = []
             
-            # FAIRNESS FIX: Sort by lastSentAt (oldest first)
-            # This ensures subscribers who didn't get email yesterday appear first
-            # Prevents quota limiting from always skipping the same users
-            subscribers.sort(
+            for sub_id, data in all_subscribers.items():
+                if not data.get('subscribed', True):
+                    continue
+                
+                # Check NEW Schema: subscriptions = {'Morning': True, 'Weekly': False}
+                subscriptions = data.get('subscriptions', {})
+                if subscriptions and isinstance(subscriptions, dict):
+                    if subscriptions.get(preference, False):
+                        matched_subscribers.append(data)
+                        continue
+                
+                # Check LEGACY Schema: preference = "Morning"
+                # Only check if subscriptions dict was missing or empty
+                if not subscriptions and data.get('preference') == preference:
+                     matched_subscribers.append(data)
+            
+            # FAIRNESS FIX: Sort by lastSentAt
+            matched_subscribers.sort(
                 key=lambda x: x.get('lastSentAt', '1970-01-01T00:00:00Z')
             )
             
-            return subscribers
+            return matched_subscribers
             
         except Exception as e:
             print(f"Error getting subscribers by preference: {e}")
-            # FALLBACK: If indexing not set up, use the old method
-            print(f"⚠️  Firebase indexing may not be configured for 'preference' field")
-            print(f"   Falling back to client-side filtering (slower)")
-            
-            try:
-                all_subscribers = self.get_all_subscribers()
-                filtered = [
-                    sub for sub in all_subscribers 
-                    if sub.get('preference') == preference and sub.get('subscribed', True)
-                ]
-                # Also sort fallback for fairness
-                filtered.sort(
-                    key=lambda x: x.get('lastSentAt', '1970-01-01T00:00:00Z')
-                )
-                return filtered
-            except Exception as fallback_error:
-                print(f"❌ Fallback failed: {fallback_error}")
-                return []
+            return []
     
     def update_preference(self, email: str, preference: str) -> bool:
         """Update subscriber's newsletter preference"""
@@ -319,20 +343,6 @@ class FirebaseService:
             print(f"Error updating preference: {e}")
             return False
     
-    def update_last_sent(self, email: str) -> bool:
-        """Update timestamp of last newsletter sent (UTC)"""
-        if not self.initialized:
-            return False
-        
-        try:
-            import hashlib
-            from datetime import datetime, timezone
-            
-            email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
-            
-            subscribers_ref = db.reference('pulse/subscribers')
-            subscriber_ref = subscribers_ref.child(email_hash)
-            
             # Store in UTC format
             utc_now = datetime.now(timezone.utc).isoformat()
             subscriber_ref.update({'lastSentAt': utc_now})
@@ -340,6 +350,52 @@ class FirebaseService:
             return True
         except Exception as e:
             print(f"Error updating last sent timestamp: {e}")
+            return False
+
+    def update_subscription_status(self, email: str, preference: str, is_active: bool) -> bool:
+        """
+        Update a SPECIFIC subscription (Granular Unsubscribe)
+        e.g. Set 'Morning' to False, but keep 'Weekly' True
+        """
+        if not self.initialized:
+            return False
+
+        try:
+            import hashlib
+            email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
+            subscribers_ref = db.reference('pulse/subscribers')
+            subscriber_ref = subscribers_ref.child(email_hash)
+            
+            data = subscriber_ref.get()
+            if not data:
+                return False
+                
+            subscriptions = data.get('subscriptions', {})
+            
+            # Migration check: if no subscriptions dict, populate from legacy 'preference'
+            if not subscriptions and data.get('preference'):
+                subscriptions[data.get('preference')] = True
+            
+            # Update the specific preference
+            subscriptions[preference] = is_active
+            
+            updates = {'subscriptions': subscriptions}
+            
+            # Check if ALL subscriptions are now false
+            any_active = any(subscriptions.values())
+            if not any_active:
+                updates['subscribed'] = False
+                updates['unsubscribedAt'] = datetime.now().isoformat()
+            else:
+                 # Ensure global subscribed is True if at least one is active
+                updates['subscribed'] = True
+                updates['unsubscribedAt'] = None
+                
+            subscriber_ref.update(updates)
+            return True
+            
+        except Exception as e:
+            print(f"Error updating subscription status: {e}")
             return False
 
 

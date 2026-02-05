@@ -108,10 +108,13 @@ class BrevoEmailService:
         data = f"{email}:{datetime.now().isoformat()}:{salt}"
         return hashlib.sha256(data.encode()).hexdigest()
     
-    def generate_unsubscribe_link(self, token: str) -> str:
-        """Generate unsubscribe URL"""
+    def generate_unsubscribe_link(self, token: str, preference: Optional[str] = None) -> str:
+        """Generate unsubscribe URL with optional preference"""
         base_url = settings.FRONTEND_URL or "https://segmento.in"
-        return f"{base_url}/api/unsubscribe?token={token}"
+        url = f"{base_url}/api/unsubscribe?token={token}"
+        if preference:
+            url += f"&preference={preference}"
+        return url
     
     def send_welcome_email(self, email: str, name: str, token: str) -> bool:
         """Send welcome email to new subscriber"""
@@ -262,7 +265,8 @@ class BrevoEmailService:
                 name = subscriber.get('name', 'Subscriber')
                 token = subscriber.get('token', '')
                 
-                unsubscribe_link = self.generate_unsubscribe_link(token)
+                # Granular Unsubscribe: Pass the current newsletter preference
+                unsubscribe_link = self.generate_unsubscribe_link(token, preference)
                 
                 # Build Medium-Style Articles HTML
                 articles_html = ""

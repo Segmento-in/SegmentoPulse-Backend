@@ -109,13 +109,13 @@ async def subscribe(request: SubscribeRequest):
 
 
 @router.get("/unsubscribe", response_model=UnsubscribeResponse)
-async def unsubscribe(token: str = Query(..., description="Unsubscribe token from email")):
+async def unsubscribe(
+    token: str = Query(..., description="Unsubscribe token from email"),
+    preference: Optional[str] = Query(None, description="Specific newsletter to unsubscribe from")
+):
     """
     Unsubscribe user via email link
-    
-    - Validates token
-    - Removes from Firebase
-    - Sends confirmation email
+    Supports Granular Unsubscribe (e.g., 'Morning' only)
     """
     try:
         firebase = get_firebase_service()
@@ -133,21 +133,33 @@ async def unsubscribe(token: str = Query(..., description="Unsubscribe token fro
         email = subscriber.get('email')
         name = subscriber.get('name', 'Subscriber')
         
-        # Update subscription status
-        success = firebase.update_subscriber_status(email, subscribed=False)
+        success = False
+        message = ""
+        
+        if preference:
+            # GRANULAR UNSUBSCRIBE
+            success = firebase.update_subscription_status(email, preference, False)
+            message = f"You have been unsubscribed from the {preference} newsletter."
+        else:
+            # GLOBAL UNSUBSCRIBE
+            success = firebase.update_subscriber_status(email, subscribed=False)
+            message = "You have been globally unsubscribed from all SegmentoPulse newsletters."
         
         if not success:
             raise HTTPException(
                 status_code=500,
-                detail="Failed to unsubscribe"
+                detail="Failed to update subscription preference"
             )
         
-        # Send confirmation email
-        brevo.send_unsubscribe_confirmation(email, name)
+        # Send confirmation email (Global or Specific)
+        # Note: We might want slightly different emails for specific vs global, 
+        # but for now reusing the standard one is fine or we can customize.
+        if not preference:
+             brevo.send_unsubscribe_confirmation(email, name)
         
         return UnsubscribeResponse(
             success=True,
-            message="You've been successfully unsubscribed from SegmentoPulse",
+            message=message,
             email=email
         )
         
