@@ -9,10 +9,10 @@ from app.services.newsletter_service import send_scheduled_newsletter
 from app.config import settings
 
 async def main():
-    print("🚀 Manually triggering 'Morning' newsletter...")
+    print("🚀 Manually triggering 'Evening' newsletter...")
     
     try:
-        result = await send_scheduled_newsletter("Morning")
+        result = await send_scheduled_newsletter("Evening")
         print("\n✅ Result:", result)
     except Exception as e:
         print("\n❌ Error:", e)
