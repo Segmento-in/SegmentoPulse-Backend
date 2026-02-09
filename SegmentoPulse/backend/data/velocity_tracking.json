@@ -1,211 +1,211 @@
 {
   "ai": {
-    "interval": 5,
+    "interval": 15,
     "history": [
-      8,
-      23,
-      19,
-      27,
-      11
+      10,
+      9,
+      26,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.550923",
-    "total_fetches": 6,
-    "total_articles": 99
+    "last_fetch": "2026-02-09T15:13:49.323857",
+    "total_fetches": 19,
+    "total_articles": 268
   },
   "data-security": {
     "interval": 15,
     "history": [
-      7,
-      7,
+      9,
+      9,
+      22,
       0,
-      23,
-      8
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.568065",
-    "total_fetches": 6,
-    "total_articles": 49
+    "last_fetch": "2026-02-09T15:13:49.328546",
+    "total_fetches": 19,
+    "total_articles": 181
   },
   "data-governance": {
     "interval": 15,
     "history": [
-      5,
-      5,
+      19,
+      9,
+      19,
       0,
-      12,
-      16
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.577797",
-    "total_fetches": 6,
-    "total_articles": 44
+    "last_fetch": "2026-02-09T15:13:49.332767",
+    "total_fetches": 19,
+    "total_articles": 173
   },
   "data-privacy": {
     "interval": 15,
     "history": [
-      5,
-      4,
+      7,
+      7,
+      23,
       0,
-      22,
-      22
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.589340",
-    "total_fetches": 6,
-    "total_articles": 58
+    "last_fetch": "2026-02-09T15:13:49.336592",
+    "total_fetches": 19,
+    "total_articles": 200
   },
   "data-engineering": {
     "interval": 15,
     "history": [
-      18,
-      7,
-      12,
-      19,
-      18
+      14,
+      14,
+      14,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.599566",
-    "total_fetches": 6,
-    "total_articles": 91
+    "last_fetch": "2026-02-09T15:13:49.340993",
+    "total_fetches": 19,
+    "total_articles": 184
   },
   "data-management": {
     "interval": 15,
     "history": [
+      19,
       10,
       10,
       0,
-      10,
-      10
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.608098",
-    "total_fetches": 6,
-    "total_articles": 57
+    "last_fetch": "2026-02-09T15:13:49.344310",
+    "total_fetches": 19,
+    "total_articles": 251
   },
   "business-intelligence": {
-    "interval": 5,
+    "interval": 15,
     "history": [
-      14,
-      12,
-      20,
-      28,
-      28
+      9,
+      9,
+      23,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.617911",
-    "total_fetches": 6,
-    "total_articles": 114
+    "last_fetch": "2026-02-09T15:13:49.347805",
+    "total_fetches": 19,
+    "total_articles": 239
   },
   "business-analytics": {
     "interval": 15,
     "history": [
-      7,
-      7,
-      17,
-      14,
-      23
+      19,
+      5,
+      20,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.623730",
-    "total_fetches": 6,
-    "total_articles": 82
+    "last_fetch": "2026-02-09T15:13:49.351590",
+    "total_fetches": 19,
+    "total_articles": 191
   },
   "customer-data-platform": {
-    "interval": 5,
+    "interval": 15,
     "history": [
-      26,
       9,
-      17,
-      18,
-      26
+      9,
+      26,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.629055",
-    "total_fetches": 6,
-    "total_articles": 105
+    "last_fetch": "2026-02-09T15:13:49.355413",
+    "total_fetches": 19,
+    "total_articles": 229
   },
   "data-centers": {
-    "interval": 5,
+    "interval": 15,
     "history": [
-      26,
+      27,
       17,
-      19,
-      18,
-      19
+      27,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.632019",
-    "total_fetches": 6,
-    "total_articles": 106
+    "last_fetch": "2026-02-09T15:13:49.358619",
+    "total_fetches": 19,
+    "total_articles": 306
   },
   "cloud-computing": {
-    "interval": 5,
+    "interval": 15,
     "history": [
-      25,
-      25,
+      24,
+      24,
+      24,
       0,
-      26,
-      28
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.635165",
-    "total_fetches": 6,
-    "total_articles": 128
+    "last_fetch": "2026-02-09T15:13:49.361966",
+    "total_fetches": 19,
+    "total_articles": 388
   },
   "magazines": {
     "interval": 60,
     "history": [
       10,
+      2,
       0,
-      10,
       0,
       0
     ],
-    "last_fetch": "2026-02-03T19:32:09.639334",
-    "total_fetches": 6,
-    "total_articles": 30
+    "last_fetch": "2026-02-09T15:13:49.365217",
+    "total_fetches": 19,
+    "total_articles": 95
   },
   "data-laws": {
-    "interval": 5,
+    "interval": 15,
     "history": [
-      30,
       10,
-      20,
-      30,
-      20
+      10,
+      29,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.642948",
-    "total_fetches": 6,
-    "total_articles": 140
+    "last_fetch": "2026-02-09T15:13:49.368458",
+    "total_fetches": 19,
+    "total_articles": 309
   },
   "cloud-aws": {
     "interval": 5,
     "history": [
       29,
       29,
-      20,
       29,
-      20
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.648035",
-    "total_fetches": 6,
-    "total_articles": 155
+    "last_fetch": "2026-02-09T15:13:49.371139",
+    "total_fetches": 19,
+    "total_articles": 494
   },
   "cloud-azure": {
     "interval": 15,
     "history": [
       20,
-      10,
-      10,
       20,
-      10
+      20,
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.651400",
-    "total_fetches": 6,
-    "total_articles": 90
+    "last_fetch": "2026-02-09T15:13:49.374325",
+    "total_fetches": 19,
+    "total_articles": 340
   },
   "cloud-gcp": {
-    "interval": 5,
+    "interval": 15,
     "history": [
       20,
       20,
       20,
-      20,
-      20
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.656098",
-    "total_fetches": 6,
-    "total_articles": 120
+    "last_fetch": "2026-02-09T15:13:49.377372",
+    "total_fetches": 19,
+    "total_articles": 380
   },
   "cloud-oracle": {
     "interval": 60,
@@ -216,9 +216,9 @@
       0,
       0
     ],
-    "last_fetch": "2026-02-03T19:32:09.660115",
-    "total_fetches": 6,
-    "total_articles": 0
+    "last_fetch": "2026-02-09T15:13:49.380479",
+    "total_fetches": 19,
+    "total_articles": 20
   },
   "cloud-ibm": {
     "interval": 60,
@@ -229,9 +229,9 @@
       0,
       0
     ],
-    "last_fetch": "2026-02-03T19:32:09.664522",
-    "total_fetches": 6,
-    "total_articles": 0
+    "last_fetch": "2026-02-09T15:13:49.384721",
+    "total_fetches": 19,
+    "total_articles": 20
   },
   "cloud-alibaba": {
     "interval": 60,
@@ -242,9 +242,9 @@
       0,
       0
     ],
-    "last_fetch": "2026-02-03T19:32:09.668251",
-    "total_fetches": 6,
-    "total_articles": 0
+    "last_fetch": "2026-02-09T15:13:49.387837",
+    "total_fetches": 19,
+    "total_articles": 20
   },
   "cloud-digitalocean": {
     "interval": 60,
@@ -255,9 +255,9 @@
       0,
       0
     ],
-    "last_fetch": "2026-02-03T19:32:09.672038",
-    "total_fetches": 6,
-    "total_articles": 0
+    "last_fetch": "2026-02-09T15:13:49.392634",
+    "total_fetches": 19,
+    "total_articles": 20
   },
   "cloud-huawei": {
     "interval": 60,
@@ -268,21 +268,21 @@
       0,
       0
     ],
-    "last_fetch": "2026-02-03T19:32:09.675285",
-    "total_fetches": 6,
-    "total_articles": 0
+    "last_fetch": "2026-02-09T15:13:49.396316",
+    "total_fetches": 19,
+    "total_articles": 20
   },
   "cloud-cloudflare": {
-    "interval": 5,
+    "interval": 15,
     "history": [
       20,
       20,
       20,
-      20,
-      20
+      0,
+      0
     ],
-    "last_fetch": "2026-02-03T19:32:09.678331",
-    "total_fetches": 6,
-    "total_articles": 120
+    "last_fetch": "2026-02-09T15:13:49.400555",
+    "total_fetches": 19,
+    "total_articles": 360
   }
 }

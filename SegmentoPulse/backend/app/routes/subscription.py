@@ -8,7 +8,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.services.brevo_email_service import get_brevo_service
-from app.services.firebase_service import get_firebase_service
+from app.services.appwrite_db import get_appwrite_db
 
 router = APIRouter(prefix="/api/subscription", tags=["subscription"])
 
@@ -46,38 +46,35 @@ async def subscribe(request: SubscribeRequest):
     """
     Subscribe a user to the newsletter
     
-    - Adds subscriber to Firebase
+    - Adds subscriber to Appwrite (Sole Source of Truth)
     - Sends welcome email via Brevo
     - Returns subscription token
-    - Now supports time-based preferences (Morning/Afternoon/Evening/Weekly/Monthly)
     """
     try:
-        firebase = get_firebase_service()
         brevo = get_brevo_service()
+        appwrite_db = get_appwrite_db()
         
         # Generate unique token
         token = brevo.generate_unsubscribe_token(request.email)
         
-        # Add subscriber to Firebase with preference
-        subscriber_data = {
-            "email": request.email,
-            "name": request.name,
-            "subscribed": True,
-            "token": token,
-            "subscribedAt": datetime.now().isoformat(),
-            "topics": request.topics,
-            "preference": request.preference  # NEW: Store newsletter preference
-        }
+        # Convert preference to boolean flags
+        prefs = {request.preference: True}
         
-        success = firebase.add_subscriber(request.email, subscriber_data)
+        # Create Subscriber in Appwrite
+        success = await appwrite_db.create_subscriber(
+            email=request.email,
+            name=request.name,
+            preferences=prefs,
+            token=token
+        )
         
         if not success:
             raise HTTPException(
                 status_code=500,
-                detail="Failed to save subscriber to database"
+                detail="Failed to save subscriber to Appwrite"
             )
         
-        # Send welcome email (could be enhanced to mention preference)
+        # Send welcome email
         email_sent = brevo.send_welcome_email(
             email=request.email,
             name=request.name,
@@ -85,16 +82,15 @@ async def subscribe(request: SubscribeRequest):
         )
         
         if not email_sent:
-            # Subscriber added but email failed
             return SubscribeResponse(
                 success=True,
-                message=f"Subscribed to {request.preference} newsletter! Check your email for confirmation.",
+                message=f"Subscribed to {request.preference} newsletter! (Email not sent)",
                 token=token
             )
         
         return SubscribeResponse(
             success=True,
-            message=f"Successfully subscribed to {request.preference} newsletter! Check your email for confirmation.",
+            message=f"Successfully subscribed to {request.preference} newsletter!",
             token=token
         )
         
@@ -118,11 +114,11 @@ async def unsubscribe(
     Supports Granular Unsubscribe (e.g., 'Morning' only)
     """
     try:
-        firebase = get_firebase_service()
+        appwrite_db = get_appwrite_db()
         brevo = get_brevo_service()
         
         # Find subscriber by token
-        subscriber = firebase.get_subscriber_by_token(token)
+        subscriber = await appwrite_db.get_subscriber_by_token(token)
         
         if not subscriber:
             raise HTTPException(
@@ -138,11 +134,11 @@ async def unsubscribe(
         
         if preference:
             # GRANULAR UNSUBSCRIBE
-            success = firebase.update_subscription_status(email, preference, False)
+            success = await appwrite_db.update_subscription_status(email, preference, False)
             message = f"You have been unsubscribed from the {preference} newsletter."
         else:
             # GLOBAL UNSUBSCRIBE
-            success = firebase.update_subscriber_status(email, subscribed=False)
+            success = await appwrite_db.update_subscriber_status(email, subscribed=False)
             message = "You have been globally unsubscribed from all SegmentoPulse newsletters."
         
         if not success:
@@ -184,11 +180,11 @@ async def unsubscribe_post(request: UnsubscribeRequest):
     Supports Granular Unsubscribe
     """
     try:
-        firebase = get_firebase_service()
+        appwrite_db = get_appwrite_db()
         brevo = get_brevo_service()
         
         # Get subscriber
-        subscriber = firebase.get_subscriber(request.email)
+        subscriber = await appwrite_db.get_subscriber(request.email)
         
         if not subscriber:
             raise HTTPException(
@@ -204,11 +200,11 @@ async def unsubscribe_post(request: UnsubscribeRequest):
         
         if request.preference:
             # GRANULAR UNSUBSCRIBE
-            success = firebase.update_subscription_status(email, request.preference, False)
+            success = await appwrite_db.update_subscription_status(email, request.preference, False)
             message = f"Successfully unsubscribed from {request.preference}"
         else:
              # GLOBAL UNSUBSCRIBE
-            success = firebase.update_subscriber_status(email, subscribed=False)
+            success = await appwrite_db.update_subscriber_status(email, subscribed=False)
             message = "Successfully unsubscribed from all newsletters"
         
         if not success:
@@ -313,4 +309,58 @@ async def send_newsletter(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to send newsletter: {str(e)}"
+        )
+
+@router.get("/status")
+async def get_subscription_status(email: str = Query(..., description="User email")):
+    """
+    Get subscription status by email
+    Required for Dashboard to sync with Appwrite (Single Source of Truth)
+    """
+    print(f"DEBUG: Status endpoint hit for {email}") # Debug print
+    try:
+        appwrite_db = get_appwrite_db()
+        subscriber = await appwrite_db.get_subscriber(email)
+        
+        if not subscriber:
+            return {
+                "email": email,
+                "subscribed": False,
+                "preference": "Weekly",
+                "subscriptions": {}
+            }
+            
+        # Transform Appwrite flat columns to Frontend nested object
+        subscriptions = {
+            "Morning": subscriber.get("sub_morning", False),
+            "Afternoon": subscriber.get("sub_afternoon", False),
+            "Evening": subscriber.get("sub_evening", False),
+            "Weekly": subscriber.get("sub_weekly", False),
+            "Monthly": subscriber.get("sub_monthly", False)
+        }
+        
+        # Determine "primary" preference for backward compatibility
+        # (Just pick the first active one, or default to Weekly)
+        primary_pref = "Weekly"
+        for key, val in subscriptions.items():
+            if val:
+                primary_pref = key
+                break
+        
+        return {
+            "email": subscriber.get("email"),
+            "name": subscriber.get("name"),
+            "subscribed": subscriber.get("isActive", True),
+            "token": subscriber.get("token"),
+            "subscribedAt": subscriber.get("$createdAt"),
+            "topics": ["news"], # Default
+            "preference": primary_pref,
+            "subscriptions": subscriptions
+        }
+        
+    except Exception as e:
+        print(f"Error getting subscription status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get status: {str(e)}"
         )

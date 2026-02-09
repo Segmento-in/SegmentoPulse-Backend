@@ -13,7 +13,7 @@ Or from backend directory:
 
 import asyncio
 import httpx
-from app.utils.id_generator import generate_article_id, decode_base64_url
+from app.utils.id_generator import generate_article_id
 import logging
 
 # Configure logging
@@ -39,7 +39,7 @@ async def test_engagement_endpoints():
     3. Dislike functionality  
     4. View tracking
     5. SHA-256 ID generation
-    6. Backwards compatibility (base64 URLs)
+
     """
     
     print("\n" + "="*60)
@@ -122,38 +122,7 @@ logger.error(f"   ❌ Stats error: {e}")
     print("="*60 + "\n")
 
 
-async def test_backwards_compatibility():
-    """
-    Test backwards compatibility with base64-encoded URLs.
-    
-    This ensures old frontend code still works.
-    """
-    print("\n" + "="*60)
-    print("BACKWARDS COMPATIBILITY TEST (Base64 URLs)")
-    print("="*60 + "\n")
-    
-    test_url = "https://example.com/legacy-article"
-    
-    # Simulate old base64 encoding (what frontend used to send)
-    import base64
-    base64_id = base64.urlsafe_b64encode(test_url.encode()).decode().rstrip('=')
-    
-    print(f"Original URL: {test_url}")
-    print(f"Base64 ID: {base64_id} (length: {len(base64_id)})")
-    
-    # Test if backend can handle it
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(f"{BASE_URL}/api/engagement/articles/{base64_id}/stats")
-            if response.status_code == 200:
-                print(f"✅ Backend successfully decoded base64 URL!")
-                print(f"   Response: {response.json()}")
-            else:
-                print(f"❌ Failed to decode base64 URL: {response.status_code}")
-        except Exception as e:
-            logger.error(f"❌ Error: {e}")
-    
-    print("\n" + "="*60)
+
 
 
 async def test_id_generation():
@@ -201,8 +170,7 @@ async def main():
     # Test 2: Engagement Endpoints
     await test_engagement_endpoints()
     
-    # Test 3: Backwards Compatibility
-    await test_backwards_compatibility()
+
     
     print("\n✅ All tests complete!\n")
 

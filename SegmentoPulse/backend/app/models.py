@@ -1,19 +1,28 @@
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, HttpUrl, field_validator, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
 class Article(BaseModel):
     """News article model"""
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str
     description: Optional[str] = ""
     url: HttpUrl
-    image: Optional[str] = ""
-    publishedAt: datetime
+    # Direct mapping to DB fields (snake_case)
+    image_url: Optional[str] = ""
+    published_at: datetime
     source: Optional[str] = ""
     category: Optional[str] = ""
+    audio_url: Optional[str] = None # URL to audio summary
     
-    @field_validator('publishedAt', mode='before')
+    # Engagement Stats (Side-loaded)
+    likes: int = 0
+    dislikes: int = Field(default=0, validation_alias="dislike") # Alias for DB 'dislike'
+    views: int = 0
+    
+    @field_validator('published_at', mode='before')
     @classmethod
     def parse_datetime(cls, v):
         """Parse datetime from various formats including RFC 2822 (RSS feeds)"""

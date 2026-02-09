@@ -119,8 +119,8 @@ class GNewsProvider(NewsProvider):
                     title=item.get('title', ''),
                     description=item.get('description', ''),
                     url=item.get('url', ''),
-                    image=item.get('image') or '',
-                    publishedAt=item.get('publishedAt', datetime.now().isoformat()),
+                    image_url=item.get('image') or '',
+                    published_at=item.get('publishedAt', datetime.now().isoformat()),
                     source=item.get('source', {}).get('name', 'GNews'),
                     category=category
                 )
@@ -198,8 +198,8 @@ class NewsAPIProvider(NewsProvider):
                     title=item.get('title', ''),
                     description=item.get('description', ''),
                     url=item.get('url', ''),
-                    image=item.get('urlToImage') or '',
-                    publishedAt=item.get('publishedAt', datetime.now().isoformat()),
+                    image_url=item.get('urlToImage') or '',
+                    published_at=item.get('publishedAt', datetime.now().isoformat()),
                     source=item.get('source', {}).get('name', 'NewsAPI'),
                     category=category
                 )
@@ -284,8 +284,8 @@ class NewsDataProvider(NewsProvider):
                     title=item.get('title', ''),
                     description=item.get('description', ''),
                     url=item.get('link', ''),
-                    image=item.get('image_url') or '',
-                    publishedAt=item.get('pubDate', datetime.now().isoformat()),
+                    image_url=item.get('image_url') or '',
+                    published_at=item.get('pubDate', datetime.now().isoformat()),
                     source=item.get('source_id', 'NewsData'),
                     category=category
                 )
@@ -409,9 +409,9 @@ class MediumRSSProvider(NewsProvider):
                     title=entry.get('title', 'Untitled'),
                     description=self._clean_html(entry.get('summary', ''))[:200],
                     url=entry.get('link', ''),
-                    image=image_url,
+                    image_url=image_url,
                     # Medium pub date format
-                    publishedAt=self._parse_pub_date(entry.get('published')),
+                    published_at=self._parse_pub_date(entry.get('published')),
                     source="Medium",
                     category="medium-article", # FORCE separation to prevent leakage
                     # author=author # Article model might not have author, check field

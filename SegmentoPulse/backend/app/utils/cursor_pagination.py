@@ -15,7 +15,7 @@ We ask: "Give me 20 items published before timestamp X"
 Query: WHERE published_at < cursor ORDER BY published_at DESC LIMIT 20
 """
 
-import base64
+
 import json
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -42,7 +42,7 @@ class CursorPagination:
             doc_id: Document ID (tie-breaker)
             
         Returns:
-            Base64-encoded cursor string
+            Hex-encoded cursor string (URL-safe, no Base64)
         """
         cursor_data = {
             'published_at': published_at,
@@ -50,7 +50,8 @@ class CursorPagination:
         }
         
         json_str = json.dumps(cursor_data)
-        encoded = base64.urlsafe_b64encode(json_str.encode()).decode()
+        # Use simple HEX encoding instead of base64 to avoid confusion
+        encoded = json_str.encode().hex()
         return encoded
     
     @staticmethod
@@ -59,13 +60,14 @@ class CursorPagination:
         Decode cursor back to timestamp + ID
         
         Args:
-            cursor: Base64-encoded cursor
+            cursor: Hex-encoded cursor
             
         Returns:
             Dict with 'published_at' and 'id'
         """
         try:
-            decoded = base64.urlsafe_b64decode(cursor.encode()).decode()
+            # Decode HEX
+            decoded = bytes.fromhex(cursor).decode()
             cursor_data = json.loads(decoded)
             return cursor_data
         except Exception as e:
@@ -104,7 +106,7 @@ class CursorPagination:
             if cursor_data:
                 # Fetch articles published before cursor timestamp
                 filters.append(
-                    Query.less_than('published_at', cursor_data['published_at'])
+                    Query.less_than('published_at', cursor_data.get('published_at') or cursor_data.get('publishedAt'))
                 )
                 
                 # Tie-breaker: If same timestamp, use ID

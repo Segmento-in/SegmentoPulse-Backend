@@ -62,23 +62,7 @@ def generate_article_id_uuid(url: str) -> str:
     return str(uuid.uuid5(namespace, url))
 
 
-def decode_base64_url(base64_url: str) -> Optional[str]:
-    """
-    Decode base64-encoded URL (for backwards compatibility)
-    
-    Args:
-        base64_url: Base64-encoded URL string
-        
-    Returns:
-        Decoded URL or None if decoding fails
-    """
-    import base64
-    
-    try:
-        decoded_bytes = base64.b64decode(base64_url)
-        return decoded_bytes.decode('utf-8')
-    except Exception:
-        return None
+
 
 
 def validate_appwrite_id(doc_id: str) -> bool:

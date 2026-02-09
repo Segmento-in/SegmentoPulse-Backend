@@ -37,8 +37,8 @@ class RSSParser:
                     title=self._clean_html(title),
                     description=cleaned_description,
                     url=link,
-                    image=image,
-                    publishedAt=pub_date,
+                    image_url=image, # Corrected: image -> image_url
+                    published_at=pub_date, # Corrected: publishedAt -> published_at
                     source=self._clean_html(article_source),
                     category=category
                 )
@@ -51,39 +51,32 @@ class RSSParser:
     
     def _extract_image_from_xml(self, item: str, description: str, category: str, title: str) -> str:
         """Extract image from multiple XML sources with fallbacks"""
-        # 1. Try enclosure tag
+        # 1. Try media:content or media:thumbnail with namespace handling
+        # Many feeds use media:content URL attribute directly
+        media_match = re.search(r'<media:(content|thumbnail)[^>]*url="([^"]+)"', item)
+        if media_match:
+            return media_match.group(2)
+            
+        # 2. Try enclosure tag (standard RSS)
         enclosure_match = re.search(r'<enclosure[^>]*url="([^"]+)"', item)
         if enclosure_match:
             return enclosure_match.group(1)
         
-        # 2. Try media:content or media:thumbnail
-        media_match = re.search(r'<media:(content|thumbnail)[^>]*url="([^"]+)"', item)
-        if media_match:
-            return media_match.group(2)
-        
-        # 3. Try img tag in description
-        img_match = re.search(r'<img[^>]*src="([^"]+)"', description)
+        # 3. Try parsing <img> tag from description or content:encoded
+        # Look for src attribute in img tags, supporting both single and double quotes
+        img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', description)
         if img_match:
             return img_match.group(1)
+            
+        # 4. Try looking for og:image pattern if inside CDATA
+        og_match = re.search(r'property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']', description)
+        if og_match:
+            return og_match.group(1)
         
-        # 4. Category-specific fallback images
-        fallbacks = {
-            'ai': 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=400&h=200&fit=crop',
-            'data-security': 'https://images.unsplash.com/photo-1563986768494-4dee2763ff3f?w=400&h=200&fit=crop',
-            'data-governance': 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=200&fit=crop',
-            'data-privacy': 'https://images.unsplash.com/photo-1614064641938-3bbee52942c7?w=400&h=200&fit=crop',
-            'data-engineering': 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=400&h=200&fit=crop',
-            'business-intelligence': 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=200&fit=crop',
-            'business-analytics': 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=400&h=200&fit=crop',
-            'customer-data-platform': 'https://images.unsplash.com/photo-1432888622747-4eb9a8d82266?w=400&h=200&fit=crop',
-            'data-centers': 'https://images.unsplash.com/photo-1544197150-b99a580bb7a8?w=400&h=200&fit=crop',
-            'magazines': 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=400&h=200&fit=crop',
-        }
-        
-        # Use hash of title for consistent fallback selection
-        default_images = list(fallbacks.values())
-        index = abs(hash(title)) % len(default_images)
-        return default_images[index]
+        # 5. Return empty string to let Frontend handle the fallback
+        # User requested: "if there is no image came while fetching then we banner our segmento pulse banner"
+        # The frontend uses /placeholder-news.svg when image is empty
+        return ""
     
     def _clean_google_news_description(self, description: str) -> str:
         """Clean Google News description - they typically only contain links, not actual content"""
@@ -164,8 +157,8 @@ class RSSParser:
                     title=entry.get('title', ''),
                     description=description,
                     url=entry.get('link', ''),
-                    image=image_url,
-                    publishedAt=published_at,
+                    image_url=image_url, # Corrected: image -> image_url
+                    published_at=published_at, # Corrected: publishedAt -> published_at
                     source=provider.upper(),
                     category=f'cloud-{provider}'
                 )
@@ -192,8 +185,21 @@ class RSSParser:
                 if enclosure.get('type', '').startswith('image'):
                     return enclosure.get('href', '')
         
-        # Default fallback image
-        return "https://via.placeholder.com/400x300/4F46E5/ffffff?text=Segmento+Pulse"
+        # Try HTML content/summary for <img> tags
+        content = ''
+        if hasattr(entry, 'content') and entry.content:
+            content = entry.content[0].get('value', '')
+        elif hasattr(entry, 'summary'):
+            content = entry.summary
+            
+        if content:
+            import re
+            img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', content)
+            if img_match:
+                return img_match.group(1)
+        
+        # Default: Return empty to let Frontend use standard banner
+        return ""
     
     def _parse_date(self, date_str: str) -> datetime:
         """Parse date string to datetime"""

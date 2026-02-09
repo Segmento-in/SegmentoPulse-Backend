@@ -111,7 +111,7 @@ class BrevoEmailService:
     def generate_unsubscribe_link(self, token: str, preference: Optional[str] = None) -> str:
         """Generate unsubscribe URL with optional preference"""
         base_url = settings.FRONTEND_URL or "https://segmento.in"
-        url = f"{base_url}/api/unsubscribe?token={token}"
+        url = f"{base_url}/pulse/unsubscribe?token={token}"
         if preference:
             url += f"&preference={preference}"
         return url
@@ -372,7 +372,7 @@ class BrevoEmailService:
                             <!-- Footer -->
                             <div style="text-align: center; margin-top: 60px; padding-top: 30px; border-top: 1px solid #eee; color: #888; font-size: 12px;">
                                 <p style="margin-bottom: 15px;">
-                                    Curated by Segmento AI
+                                    Curated by Segmento
                                 </p>
                                 <a href="https://segmento.in/pulse" style="color: #888; text-decoration: underline; margin: 0 10px;">Visit Pulse</a>
                                 <a href="{unsubscribe_link}" style="color: #888; text-decoration: underline; margin: 0 10px;">Unsubscribe</a>

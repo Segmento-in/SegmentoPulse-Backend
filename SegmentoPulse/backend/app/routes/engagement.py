@@ -5,16 +5,24 @@ Handles article likes, views tracking, and trending articles
 
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
+from pydantic import BaseModel
 from app.services.appwrite_db import get_appwrite_db
 from app.config import settings
-from app.utils.id_generator import generate_article_id, decode_base64_url
+from app.utils.id_generator import generate_article_id
 from datetime import datetime, timedelta
 import logging
-import base64
+
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class EngagementRequest(BaseModel):
+    url: Optional[str] = None
+    title: Optional[str] = None
+    image: Optional[str] = None
+    category: Optional[str] = None  # NEW: For strict routing
 
 
 def resolve_article_id(article_id_or_url: str) -> tuple[str, str]:
@@ -31,13 +39,8 @@ def resolve_article_id(article_id_or_url: str) -> tuple[str, str]:
     if len(article_id_or_url) == 32 and article_id_or_url.isalnum():
         return (article_id_or_url, article_id_or_url)
     
-    # Try to decode as base64 URL (old format)
-    decoded_url = decode_base64_url(article_id_or_url)
-    if decoded_url:
-        # Generate SHA-256 ID from decoded URL
-        doc_id = generate_article_id(decoded_url)
-        logger.debug(f"Decoded base64 URL → SHA-256 ID: {doc_id[:8]}...")
-        return (doc_id, decoded_url)
+    # 3. Default fallback (legacy 20-char IDs)
+    return (article_id_or_url, None)
     
     # Assume it's a plain URL, generate ID
     doc_id = generate_article_id(article_id_or_url)
@@ -45,60 +48,71 @@ def resolve_article_id(article_id_or_url: str) -> tuple[str, str]:
 
 
 @router.get("/articles/{article_id}/stats")
-async def get_article_stats(article_id: str):
+@router.get("/articles/{article_id}/stats")
+async def get_article_stats(article_id: str, category: Optional[str] = None):
     """
     Get engagement stats for an article.
-    
-    Supports both:
-    - SHA-256 document IDs (32 chars) - NEW
-    - Base64-encoded URLs - OLD (backwards compatible)
-    
-    Args:
-        article_id: Document ID or base64-encoded URL
-        
-    Returns:
-        Article stats (likes, dislikes, views)
     """
     try:
         appwrite_db = get_appwrite_db()
+        doc_id, _ = resolve_article_id(article_id)
         
-        # Resolve article ID (handles base64 URLs for backwards compatibility)
-        doc_id, original_input = resolve_article_id(article_id)
+        # Determine strict collection if category provided
+        target_collection_ids = []
+        if category:
+            target_collection_ids.append(appwrite_db.get_collection_id(category))
         
-        # Try regular articles collection first
-        collection_id = settings.APPWRITE_COLLECTION_ID
+        # Always fallback to checking ALL known collections if not found (Safety Net)
+        # Order: Targeted -> Default -> Cloud -> AI -> Data -> Magazine -> Medium
+        fallback_collections = [
+            settings.APPWRITE_COLLECTION_ID,
+            settings.APPWRITE_CLOUD_COLLECTION_ID,
+            settings.APPWRITE_AI_COLLECTION_ID,
+            settings.APPWRITE_DATA_COLLECTION_ID,
+            settings.APPWRITE_MAGAZINE_COLLECTION_ID,
+            settings.APPWRITE_MEDIUM_COLLECTION_ID
+        ]
         
-        try:
-            doc = appwrite_db.databases.get_document(
-                database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=collection_id,
-                document_id=doc_id
-            )
-        except:
-            # Try cloud articles collection
-            if settings.APPWRITE_CLOUD_COLLECTION_ID:
-                collection_id = settings.APPWRITE_CLOUD_COLLECTION_ID
-                doc = appwrite_db.databases.get_document(
+        for cid in fallback_collections:
+            if cid and cid not in target_collection_ids:
+                target_collection_ids.append(cid)
+        
+        doc = None
+        found_collection = None
+        
+        for collection_id in target_collection_ids:
+            try:
+                doc = appwrite_db.tablesDB.get_row(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=collection_id,
                     document_id=doc_id
                 )
-            else:
-                raise HTTPException(status_code=404, detail="Article not found")
+                if doc:
+                    found_collection = collection_id
+                    break
+            except:
+                continue
+        
+        if not doc:
+             # Return zeros (not found is common for new articles)
+            return {
+                "article_id": doc_id,
+                "likes": 0,
+                "dislikes": 0,
+                "views": 0,
+                "success": True # Technically success, just no data yet
+            }
         
         return {
             "article_id": doc_id,
             "likes": doc.get('likes', 0),
-            "dislikes": doc.get('dislikes', 0),
+            "dislikes": doc.get('dislike', 0),
             "views": doc.get('views', 0),
             "success": True
         }
-        
-    except HTTPException:
-        raise
+
     except Exception as e:
         logger.error(f"Error getting stats for {article_id}: {e}")
-        # Return zeros instead of failing
         return {
             "article_id": article_id,
             "likes": 0,
@@ -109,62 +123,89 @@ async def get_article_stats(article_id: str):
 
 
 @router.post("/articles/{article_id}/like")
-async def like_article(article_id: str):
+async def like_article(article_id: str, request: EngagementRequest = None):
     """
     Increment like count for an article.
-    
-    Supports both SHA-256 IDs and base64 URLs.
-    
-    Args:
-        article_id: Document ID or base64-encoded URL
-        
-    Returns:
-        Updated likes count
     """
     try:
         appwrite_db = get_appwrite_db()
-        
-        # Resolve article ID
         doc_id, _ = resolve_article_id(article_id)
         
-        # Try regular articles collection first
-        collection_id = settings.APPWRITE_COLLECTION_ID
+        # ---------------------------------------------------------
+        # STRICT ROUTING LOGIC
+        # ---------------------------------------------------------
+        # If frontend sends category, we use it to find the EXACT collection.
+        # If not, we fallback to default (legacy behavior).
+        target_collection_id = settings.APPWRITE_COLLECTION_ID
         
+        if request and request.category:
+            target_collection_id = appwrite_db.get_collection_id(request.category)
+            logger.info(f"📍 Routing 'like' for {doc_id} to collection: {target_collection_id} (Category: {request.category})")
+        
+        # 1. Try to get document from the TARGETED collection
         try:
-            doc = appwrite_db.databases.get_document(
+            doc = appwrite_db.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=collection_id,
+                collection_id=target_collection_id,
                 document_id=doc_id
             )
-        except:
-            # Try cloud articles collection
-            if settings.APPWRITE_CLOUD_COLLECTION_ID:
-                collection_id = settings.APPWRITE_CLOUD_COLLECTION_ID
-                doc = appwrite_db.databases.get_document(
-                    database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=collection_id,
-                    document_id=doc_id
-                )
+        except Exception:
+            # 2. Document NOT FOUND -> Create it if we have URL
+            if request and request.url:
+                logger.info(f"🆕 Article {doc_id} not found in {target_collection_id}. Creating from metadata...")
+                try:
+                    new_doc = {
+                        "url": request.url,
+                        "title": request.title or "Unknown Article",
+                        "image_url": request.image or "",
+                        "source": "pulse-engagement", 
+                        "published_at": datetime.now().isoformat(),
+                        "fetched_at": datetime.now().isoformat(),
+                        "likes": 0,
+                        "dislike": 0,
+                        "views": 0,
+                        "category": request.category or "wildcard"
+                    }
+                    
+                    logger.info(f"📝 Creating new article with data: {new_doc}")
+                    
+                    appwrite_db.tablesDB.create_row(
+                        database_id=settings.APPWRITE_DATABASE_ID,
+                        collection_id=target_collection_id,
+                        document_id=doc_id,
+                        data=new_doc
+                    )
+                    # Fetch the newly created doc
+                    doc = appwrite_db.tablesDB.get_row(
+                        database_id=settings.APPWRITE_DATABASE_ID,
+                        collection_id=target_collection_id,
+                        document_id=doc_id
+                    )
+                except Exception as create_err:
+                    logger.error(f"Failed to create missing article: {create_err}")
+                    raise HTTPException(status_code=404, detail="Article not found and creation failed")
             else:
-                raise HTTPException(status_code=404, detail="Article not found")
-        
-        # Increment likes
+                # If we don't have metadata to create it, and it's not found, it's a 404
+                raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
+
+        # 3. Increment
         current_likes = doc.get('likes', 0)
+        if current_likes is None: current_likes = 0
+            
         new_likes = current_likes + 1
         
-        # Update document
-        appwrite_db.databases.update_document(
+        updated_doc = appwrite_db.tablesDB.update_row(
             database_id=settings.APPWRITE_DATABASE_ID,
-            collection_id=collection_id,
+            collection_id=target_collection_id,
             document_id=doc_id,
             data={"likes": new_likes}
         )
         
-        logger.info(f"❤️  Article {doc_id[:8]}... liked (total: {new_likes})")
+        logger.info(f"❤️  Article {doc_id[:8]}... liked (total: {updated_doc['likes']})")
         
         return {
             "article_id": doc_id,
-            "likes": new_likes,
+            "likes": updated_doc['likes'],
             "success": True
         }
         
@@ -176,62 +217,77 @@ async def like_article(article_id: str):
 
 
 @router.post("/articles/{article_id}/dislike")
-async def dislike_article(article_id: str):
+async def dislike_article(article_id: str, request: EngagementRequest = None):
     """
-    Increment dislike count for an article.
-    
-    Supports both SHA-256 IDs and base64 URLs.
-    
-    Args:
-        article_id: Document ID or base64-encoded URL
-        
-    Returns:
-        Updated dislikes count
+    Increment dislike count with Upsert logic.
     """
     try:
         appwrite_db = get_appwrite_db()
-        
-        # Resolve article ID
         doc_id, _ = resolve_article_id(article_id)
         
-        # Try regular articles collection first
-        collection_id = settings.APPWRITE_COLLECTION_ID
+        # ---------------------------------------------------------
+        # STRICT ROUTING LOGIC
+        # ---------------------------------------------------------
+        target_collection_id = settings.APPWRITE_COLLECTION_ID
+        
+        if request and request.category:
+            target_collection_id = appwrite_db.get_collection_id(request.category)
         
         try:
-            doc = appwrite_db.databases.get_document(
+            doc = appwrite_db.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=collection_id,
+                collection_id=target_collection_id,
                 document_id=doc_id
             )
-        except:
-            # Try cloud articles collection
-            if settings.APPWRITE_CLOUD_COLLECTION_ID:
-                collection_id = settings.APPWRITE_CLOUD_COLLECTION_ID
-                doc = appwrite_db.databases.get_document(
-                    database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=collection_id,
-                    document_id=doc_id
-                )
+        except Exception:
+            if request and request.url:
+                logger.info(f"🆕 Article {doc_id} not found in {target_collection_id}. Creating from metadata...")
+                try:
+                    new_doc = {
+                        "url": request.url,
+                        "title": request.title or "Unknown Article",
+                        "image_url": request.image or "",
+                        "source": "pulse-engagement",
+                        "published_at": datetime.now().isoformat(),
+                        "fetched_at": datetime.now().isoformat(),
+                        "likes": 0,
+                        "dislike": 0,
+                        "views": 0,
+                        "category": request.category or "wildcard"
+                    }
+                    appwrite_db.tablesDB.create_row(
+                        database_id=settings.APPWRITE_DATABASE_ID,
+                        collection_id=target_collection_id,
+                        document_id=doc_id,
+                        data=new_doc
+                    )
+                    doc = appwrite_db.tablesDB.get_row(
+                        database_id=settings.APPWRITE_DATABASE_ID,
+                        collection_id=target_collection_id,
+                        document_id=doc_id
+                    )
+                except Exception as create_err:
+                    raise HTTPException(status_code=404, detail="Article not found and creation failed")
             else:
-                raise HTTPException(status_code=404, detail="Article not found")
+                raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
         
-        # Increment dislikes
-        current_dislikes = doc.get('dislikes', 0)
+        current_dislikes = doc.get('dislike', 0)
+        if current_dislikes is None: current_dislikes = 0
+            
         new_dislikes = current_dislikes + 1
         
-        # Update document
-        appwrite_db.databases.update_document(
+        updated_doc = appwrite_db.tablesDB.update_row(
             database_id=settings.APPWRITE_DATABASE_ID,
-            collection_id=collection_id,
+            collection_id=target_collection_id,
             document_id=doc_id,
-            data={"dislikes": new_dislikes}
+            data={"dislike": new_dislikes}
         )
         
-        logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {new_dislikes})")
+        logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {updated_doc['dislike']})")
         
         return {
             "article_id": doc_id,
-            "dislikes": new_dislikes,
+            "dislikes": updated_doc['dislike'],
             "success": True
         }
         
@@ -243,64 +299,79 @@ async def dislike_article(article_id: str):
 
 
 @router.post("/articles/{article_id}/view")
-async def track_view(article_id: str):
+async def track_view(article_id: str, request: EngagementRequest = None):
     """
-    Increment view count for an article.
-    
-    Supports both SHA-256 IDs and base64 URLs.
-    
-    Args:
-        article_id: Document ID or base64-encoded URL
-        
-    Returns:
-        Updated views count
+    Increment view count with Upsert logic.
     """
     try:
         appwrite_db = get_appwrite_db()
-        
-        # Resolve article ID
         doc_id, _ = resolve_article_id(article_id)
         
-        # Try regular articles collection first
-        collection_id = settings.APPWRITE_COLLECTION_ID
+        # ---------------------------------------------------------
+        # STRICT ROUTING LOGIC
+        # ---------------------------------------------------------
+        target_collection_id = settings.APPWRITE_COLLECTION_ID
+        
+        if request and request.category:
+            target_collection_id = appwrite_db.get_collection_id(request.category)
         
         try:
-            doc = appwrite_db.databases.get_document(
+            doc = appwrite_db.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=collection_id,
+                collection_id=target_collection_id,
                 document_id=doc_id
             )
-        except:
-            # Try cloud articles collection
-            if settings.APPWRITE_CLOUD_COLLECTION_ID:
-                collection_id = settings.APPWRITE_CLOUD_COLLECTION_ID
-                doc = appwrite_db.databases.get_document(
-                    database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=collection_id,
-                    document_id=doc_id
-                )
+        except Exception:
+            if request and request.url:
+                try:
+                    new_doc = {
+                        "url": request.url,
+                        "title": request.title or "Unknown Article",
+                        "image_url": request.image or "",
+                        "source": "pulse-engagement",
+                        "published_at": datetime.now().isoformat(),
+                        "fetched_at": datetime.now().isoformat(),
+                        "likes": 0,
+                        "dislike": 0,
+                        "views": 0,
+                        "category": request.category or "wildcard"
+                    }
+                    appwrite_db.tablesDB.create_row(
+                        database_id=settings.APPWRITE_DATABASE_ID,
+                        collection_id=target_collection_id,
+                        document_id=doc_id,
+                        data=new_doc
+                    )
+                    doc = appwrite_db.tablesDB.get_row(
+                        database_id=settings.APPWRITE_DATABASE_ID,
+                        collection_id=target_collection_id,
+                        document_id=doc_id
+                    )
+                except Exception as create_err:
+                    # Fail silently for views if creation fails (maybe race condition)
+                    logger.warning(f"Failed to create article on view: {create_err}")
+                    raise HTTPException(status_code=404, detail="Article not found")
             else:
-                raise HTTPException(status_code=404, detail="Article not found")
+                raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
         
-        # Increment views
         current_views = doc.get('views', 0)
+        if current_views is None: current_views = 0
+            
         new_views = current_views + 1
         
-        # Update document
-        appwrite_db.databases.update_document(
+        updated_doc = appwrite_db.tablesDB.update_row(
             database_id=settings.APPWRITE_DATABASE_ID,
-            collection_id=collection_id,
+            collection_id=target_collection_id,
             document_id=doc_id,
             data={"views": new_views}
         )
         
-        # Log only every 10 views to avoid spam
         if new_views % 10 == 0:
-            logger.info(f"👁️  Article {doc_id[:8]}... reached {new_views} views")
+            logger.info(f"👁️  Article {doc_id[:8]}... reached {updated_doc['views']} views")
         
         return {
             "article_id": doc_id,
-            "views": new_views,
+            "views": updated_doc['views'],
             "success": True
         }
         
@@ -343,7 +414,7 @@ async def get_trending_articles(
             collection_id = settings.APPWRITE_COLLECTION_ID
         
         # Query articles, sorted by views (descending)
-        response = appwrite_db.databases.list_documents(
+        response = appwrite_db.tablesDB.list_rows(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=collection_id,
             queries=[
@@ -360,7 +431,7 @@ async def get_trending_articles(
         for article in articles:
             views = article.get('views', 0)
             likes = article.get('likes', 0)
-            dislikes = article.get('dislikes', 0)
+            dislikes = article.get('dislike', 0)
             article['engagement_score'] = views + (likes * 5) - (dislikes * 3)
         
         # Sort by engagement score
@@ -411,7 +482,7 @@ async def get_popular_cloud_articles(provider: Optional[str] = None, limit: int 
         if provider:
             queries.insert(0, Query.equal('provider', provider))
         
-        response = appwrite_db.databases.list_documents(
+        response = appwrite_db.tablesDB.list_rows(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=settings.APPWRITE_CLOUD_COLLECTION_ID,
             queries=queries

@@ -14,6 +14,7 @@ warnings.filterwarnings('ignore', message='Call to deprecated function') # Catch
 try:
     from appwrite.client import Client
     from appwrite.services.databases import Databases
+    from appwrite.services.storage import Storage
     from appwrite.query import Query
     from appwrite.exception import AppwriteException
     APPWRITE_AVAILABLE = True
@@ -41,6 +42,7 @@ class AppwriteDatabase:
         self.initialized = False
         self.client = None
         self.databases = None
+        self.storage = None
         
         if APPWRITE_AVAILABLE and settings.APPWRITE_PROJECT_ID:
             self._initialize()
@@ -65,6 +67,9 @@ class AppwriteDatabase:
             
             # Initialize databases service
             self.databases = Databases(self.client)
+            
+            # Initialize storage service
+            self.storage = Storage(self.client)
             
             self.initialized = True
             print("")
@@ -97,6 +102,9 @@ class AppwriteDatabase:
                 def delete_row(self, *args, **kwargs):
                      # Mapping delete_document -> delete_row if needed
                     return self.db.delete_document(*args, **kwargs)
+
+                def update_row(self, *args, **kwargs):
+                    return self.db.update_document(*args, **kwargs)
             
             self.tablesDB = TablesDBWrapper(self.databases)
             
@@ -112,64 +120,71 @@ class AppwriteDatabase:
             print("")
             print("")
             self.initialized = False
+            
+    def get_collection_id(self, category: str) -> str:
+        """
+        Phase 4: Strict Routing Algorithm (Vertical Architecture)
+        """
+        # Normalize
+        if not category or not category.strip():
+            logger.warning("[ROUTING] Empty category, defaulting to News Articles")
+            return settings.APPWRITE_COLLECTION_ID
+            
+        cat = category.lower().strip()
+        
+        # 1. AI Vertical
+        if cat == 'ai':
+            return settings.APPWRITE_AI_COLLECTION_ID
+            
+        # 2. Cloud Vertical (All providers)
+        if cat.startswith('cloud-'):
+            return settings.APPWRITE_CLOUD_COLLECTION_ID
+            
+        # 3. Data Vertical (Security, Governance, etc.)
+        if cat.startswith('data-') or cat.startswith('business-') or cat == 'customer-data-platform':
+            return settings.APPWRITE_DATA_COLLECTION_ID
+            
+        # 4. Magazines
+        if cat == 'magazines':
+            return settings.APPWRITE_MAGAZINE_COLLECTION_ID
+            
+        # 5. Medium
+        if cat == 'medium-article':
+            return settings.APPWRITE_MEDIUM_COLLECTION_ID
+            
+        # Default / Fallback
+        logger.warning(f"[ROUTING] Unmatched category '{cat}', defaulting to News Articles")
+        return settings.APPWRITE_COLLECTION_ID
+
     
     def _generate_url_hash(self, url: str) -> str:
         """
         Generate a unique hash for an article URL
         
-        **INTEGRATION FIX #2**: Updated to match frontend ID generation
+        **INTEGRATION UPDATE**: Matches Schema Size 64
+        Uses SHA-256 hash of the RAW URL.
         
-        Uses SHA-256 hash of the RAW URL (not canonicalized) to ensure
-        Frontend and Backend generate IDENTICAL IDs for the same article.
-        
-        **WHY THE CHANGE**:
-        - OLD: 16-char hash of canonical URL (different from frontend)
-        - NEW: 32-char hash of raw URL (matches frontend exactly)
-        
-        **NOTE**: Canonicalization is still used for Appwrite deduplication
-        via the unique constraint, but NOT for ID generation.
-        
-        Args:
-            url: Article URL (raw, not canonicalized)
-            
         Returns:
-            32-character hex hash (Appwrite-compatible, frontend-compatible)
-            
-        Example:
-            >>> _generate_url_hash("https://cnn.com/article?utm=123")
-            "a1b2c3d4e5f67890abcdef1234567890"  # 32 chars
+            64-character hex hash
         """
         import hashlib
-        
         # Generate SHA-256 hash from RAW URL (no canonicalization for ID)
         hash_bytes = hashlib.sha256(url.encode('utf-8')).hexdigest()
-        
-        # Return first 32 characters (matches frontend idGenerator.ts)
-        return hash_bytes[:32]
+        # Return FULL 64 characters (matches DB Schema)
+        return hash_bytes
     
     async def get_articles(self, category: str, limit: int = 20, offset: int = 0) -> List[Dict]:
         """
         Get articles by category with pagination and projection (FAANG-Level)
-        
-        Projection optimization: Fetch only fields needed for list view
-        - Reduces payload size by ~70% (50KB → 15KB)
-        - Faster network transfer
-        - Lower bandwidth costs
-        
-        Args:
-            category: News category (e.g., 'ai', 'data-security')
-            limit: Maximum number of articles to return (default: 20)
-            offset: Number of articles to skip for pagination (default: 0)
-        
-        Returns:
-            List of article dictionaries, sorted by published_at DESC
         """
         if not self.initialized:
             return []
         
         try:
+            # Determine collection based on category
+            target_collection_id = self.get_collection_id(category)
+
             # FAANG Optimization: Projection - fetch only what UI needs!
-            # List view doesn't need 'description' or 'full_text' (saved 70% bandwidth)
             select_fields = [
                 '$id',
                 'title',
@@ -184,15 +199,13 @@ class AppwriteDatabase:
             # Query with projection
             response = self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_COLLECTION_ID,
+                collection_id=target_collection_id,
                 queries=[
                     Query.equal('category', category),
                     Query.order_desc('published_at'),  # Uses index!
                     Query.limit(limit),
                     Query.offset(offset)
                 ]
-                # Note: Appwrite Python SDK may not support 'select' in list_documents
-                # This is a placeholder for when it's supported or via REST API
             )
             
             # Convert Appwrite documents to Article dictionaries
@@ -201,12 +214,16 @@ class AppwriteDatabase:
                 try:
                     article = {
                         'title': doc.get('title'),
-                        'description': doc.get('description', ''),  # May not always be fetched
+                        'description': doc.get('description', ''),
                         'url': doc.get('url'),
-                        'image': doc.get('image_url', ''),
+                        'image_url': doc.get('image_url', ''),
                         'publishedAt': doc.get('published_at'),
+                        'published_at': doc.get('published_at'), # Standard schema field
                         'source': doc.get('source', ''),
-                        'category': doc.get('category')
+                        'category': doc.get('category'),
+                        'likes': doc.get('likes', 0),
+                        'dislikes': doc.get('dislike', 0),
+                        'views': doc.get('views', 0)
                     }
                     articles.append(article)
                 except Exception as e:
@@ -214,7 +231,7 @@ class AppwriteDatabase:
                     continue
             
             if articles:
-                print(f"[SUCCESS] Retrieved {len(articles)} articles for '{category}' (offset: {offset}, projection: ON)")
+                print(f"[SUCCESS] Retrieved {len(articles)} articles for '{category}' (Collection: {target_collection_id})")
             
             return articles
             
@@ -222,23 +239,50 @@ class AppwriteDatabase:
             print(f"Appwrite query error for category '{category}': {e}")
             return []
     
-    async def get_articles_with_queries(self, queries: List) -> List[Dict]:
+    async def get_articles_with_queries(self, queries: List, category: str = None) -> List[Dict]:
         """
         Get articles with custom query filters (for cursor pagination)
         
         Args:
             queries: List of Appwrite Query objects
-            
-        Returns:
-            List of article dictionaries
+            category: Optional category for explicit routing (Recommended)
         """
         if not self.initialized:
             return []
         
         try:
+            # Phase 4 Routing: Determine Collection ID
+            target_collection_id = settings.APPWRITE_COLLECTION_ID
+            
+            if category:
+                # 1. Explicit Routing (Robust)
+                target_collection_id = self.get_collection_id(category)
+                logger.info(f"🔍 [ROUTING] Category='{category}' -> Collection='{target_collection_id}'")
+            else:
+                # 2. Fallback: Extract category from queries (Brittle)
+                # Parse query list for 'category' to route to correct table
+                for q in queries:
+                    q_str = str(q)
+                    if 'category' in q_str:
+                        import re
+                        # Regex for JSON-like string: {"attribute":"category","values":["ai"]}
+                        # Logic: Look for "category" attribute, then find the value inside ["..."]
+                        match = re.search(r'category.*?"values":\["([^"]+)"\]', q_str)
+                        if not match:
+                             # Try simpler regex (just in case string format differs)
+                             match = re.search(r'category.*?"([^"]+)"', q_str)
+                        
+                        if match:
+                            category_val = match.group(1)
+                            target_collection_id = self.get_collection_id(category_val)
+                            logger.info(f"🔍 [ROUTING-FALLBACK] Extracted='{category_val}' -> Collection='{target_collection_id}'")
+                            break
+
+            logger.info(f"🚀 [QUERY] Executing query on Collection: {target_collection_id}")
+            
             response = self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_COLLECTION_ID,
+                collection_id=target_collection_id,
                 queries=queries
             )
             
@@ -251,11 +295,14 @@ class AppwriteDatabase:
                         'title': doc.get('title'),
                         'description': doc.get('description', ''),
                         'url': doc.get('url'),
-                        'image': doc.get('image_url', ''),
+                        'image_url': doc.get('image_url', ''),
                         'publishedAt': doc.get('published_at'),
-                        'published_at': doc.get('published_at'),  # Both formats
+                        'published_at': doc.get('published_at'),
                         'source': doc.get('source', ''),
-                        'category': doc.get('category')
+                        'category': doc.get('category'),
+                        'likes': doc.get('likes', 0),
+                        'dislikes': doc.get('dislike', 0),
+                        'views': doc.get('views', 0)
                     }
                     articles.append(article)
                 except Exception as e:
@@ -266,24 +313,10 @@ class AppwriteDatabase:
         except Exception as e:
             print(f"Query error: {e}")
             return []
-        except Exception as e:
-            print(f"Unexpected error querying Appwrite: {e}")
-            return []
     
     async def save_articles(self, articles: List) -> int:
         """
         Save articles to Appwrite database with TRUE parallel writes
-        
-        Optimization: Uses asyncio.gather for parallel writes instead of sequential loop
-        - Sequential (OLD): 50 articles × 20ms = 1000ms
-        - Parallel (NEW): max(20ms) = 20ms  
-        - Speedup: 50x faster!
-        
-        Args:
-            articles: List of article dicts (already sanitized and validated)
-        
-        Returns:
-            Tuple[int, int, int, List[Dict]]: (saved_count, duplicate_count, error_count, saved_docs)
         """
         logger = logging.getLogger(__name__)
         
@@ -292,22 +325,33 @@ class AppwriteDatabase:
         
         if not articles:
             return (0, 0, 0, [])
+
+        # Initialize URL Filter
+        try:
+            from app.services.deduplication import get_url_filter
+            url_filter = get_url_filter()
+        except ImportError:
+            logger.warning("[Appwrite] Deduplication service not found, skipping local bloom filter check")
+            url_filter = None
         
         async def save_single_article(article: dict) -> tuple:
-            """
-            Save a single article (for parallel execution)
-            
-            Returns:
-                ('success'|'duplicate'|'error', article_data)
-            """
             try:
                 # Handle both dict and object types
                 url = str(article.get('url', '')) if isinstance(article, dict) else str(article.url)
                 if not url:
                     return ('error', None)
-                    
-                # Generate unique document ID from canonical URL hash
-                url_hash = self._generate_url_hash(url)
+                
+                # 1. BLOOM FILTER CHECK (Local De-duplication)
+                if url_filter and not url_filter.check_and_add(url):
+                    # Only return duplicate if it was actually caught by the filter
+                    # This saves an API call to Appwrite
+                    return ('duplicate', None)
+
+                # Generate unique document ID (Must be <= 36 chars)
+                # Use raw SHA-256 for url_hash attribute (64 chars)
+                url_hash_full = self._generate_url_hash(url)
+                # Truncate for Document ID (32 chars)
+                doc_id = url_hash_full[:32]
                 
                 # Helper to get field from dict or object
                 def get_field(obj, field, default=''):
@@ -315,48 +359,66 @@ class AppwriteDatabase:
                         return obj.get(field, default)
                     return getattr(obj, field, default)
                 
-                # Prepare document data
+                # Route to correct collection
+                category_val = str(get_field(article, 'category', ''))
+                target_collection_id = self.get_collection_id(category_val)
+
+                # Prepare document data - STRICT SCHEMA MAPPING (New Schema Enforcement)
+                # Notes: 
+                # 1. 'image_url' is the standard (replacing legacy 'image')
+                # 2. 'published_at' is the standard (replacing legacy 'publishedAt' camelCase)
+                
+                # Helper to get published date safely
+                pub_date = get_field(article, 'published_at') or get_field(article, 'publishedAt')
+                if isinstance(pub_date, datetime):
+                    pub_date_str = pub_date.isoformat()
+                else:
+                    pub_date_str = str(pub_date or datetime.now().isoformat())
+
                 document_data = {
                     'title': str(get_field(article, 'title', ''))[:500],
                     'description': str(get_field(article, 'description', ''))[:2000],
                     'url': url[:2048],
-                    'image_url': str(get_field(article, 'image', ''))[:2048],
-                    'published_at': (
-                        get_field(article, 'publishedAt').isoformat() 
-                        if isinstance(get_field(article, 'publishedAt'), datetime) 
-                        else str(get_field(article, 'publishedAt', ''))
-                    ),
+                    'image_url': str(get_field(article, 'image_url') or get_field(article, 'image', ''))[:2048] or None,
+                    'published_at': pub_date_str,
                     'source': str(get_field(article, 'source', ''))[:200],
                     'category': str(get_field(article, 'category', ''))[:100],
                     'fetched_at': datetime.now().isoformat(),
-                    'url_hash': url_hash,
-                    'slug': str(get_field(article, 'slug', ''))[:200],
+                    'url_hash': url_hash_full, # 64 chars
+                    'slug': str(get_field(article, 'slug', ''))[:200] if get_field(article, 'slug', '') else None,
                     'quality_score': int(get_field(article, 'quality_score', 50)),
-                    # FIX: Initialize engagement metrics (required by Appwrite schema)
+                    # ENGAGEMENT METRICS
                     'likes': 0,
-                    'dislike': 0, # Note: Schema uses singular 'dislike' based on error logs/screenshots
-                    'views': 0
+                    'dislike': 0, 
+                    'views': 0,
+                    'audio_url': get_field(article, 'audio_url', None) # Initialize audio_url
                 }
                 
+                # Cloud Collection Specifics (Legacy Schema requirements)
+                if target_collection_id == settings.APPWRITE_CLOUD_COLLECTION_ID:
+                    document_data['provider'] = document_data['source']
+                    document_data['is_official'] = False # Default to False
+
                 # Try to create document
                 self.tablesDB.create_row(
                     database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=settings.APPWRITE_COLLECTION_ID,
-                    document_id=url_hash,
+                    collection_id=target_collection_id,
+                    document_id=doc_id, # Truncated ID
                     data=document_data
                 )
                 
                 return ('success', document_data)
                 
             except AppwriteException as e:
-                # Document already exists (duplicate detected by canonical URL)
+                # Document already exists (duplicate detected by Appwrite)
                 if 'document_already_exists' in str(e).lower() or 'unique' in str(e).lower():
                     return ('duplicate', None)
                 else:
-                    logger.error(f"❌ Appwrite Write Error: {str(e)} | URL: {url[:100]}...")
+                    logger.error(f"❌ Appwrite Write Error: {str(e)} | URL: {url[:50]}...")
                     return ('error', str(e))
                     
             except Exception as e:
+                logger.error(f"❌ General Error: {str(e)} | URL: {url[:50]}...", exc_info=True)
                 return ('error', str(e))
         
         # PARALLEL WRITES: Create tasks for all articles
@@ -439,7 +501,316 @@ class AppwriteDatabase:
             print(f"Error deleting old articles: {e}")
             return 0
     
-    async def get_stats(self) -> Dict:
+    # ------------------------------------------------------------------
+    # SUBSCRIBER MANAGEMENT (Migration Phase 2)
+    # ------------------------------------------------------------------
+
+    async def create_subscriber(self, email: str, name: str, preferences: Dict[str, bool], token: str) -> bool:
+        """
+        Create a new subscriber in Appwrite (Dual-Write)
+        Uses Boolean Flags schema: sub_morning, sub_afternoon, etc.
+        """
+        if not self.initialized:
+            return False
+            
+        try:
+            # Prepare document data
+            data = {
+                "email": email,
+                "name": name,
+                "token": token,
+                "isActive": True,
+                # Map dict preferences to individual boolean columns
+                "sub_morning": preferences.get("Morning", False),
+                "sub_afternoon": preferences.get("Afternoon", False),
+                "sub_evening": preferences.get("Evening", False),
+                "sub_weekly": preferences.get("Weekly", False),
+                "sub_monthly": preferences.get("Monthly", False)
+            }
+            
+            # Use email hash or sanitized email as ID to prevent duplicates
+            # doc_id = hashlib.md5(email.encode()).hexdigest() 
+            # Appwrite requires unique ID. 'email' attribute is unique, but let's use 'unique()' or hash.
+            # Using MD5 of email ensures idempotent writes (same email = same ID)
+            doc_id = hashlib.md5(email.lower().encode()).hexdigest()
+
+            self.tablesDB.create_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                document_id=doc_id,
+                data=data
+            )
+            logger.info(f"✅ [Appwrite] Subscriber created: {email}")
+            return True
+
+        except AppwriteException as e:
+            if 'document_already_exists' in str(e).lower() or 'unique' in str(e).lower():
+                # If exists, we should try to update it? Or just return True?
+                # For dual-write safety, let's update it to ensure sync
+                logger.info(f"ℹ️ [Appwrite] Subscriber exists, updating: {email}")
+                return await self.update_subscriber(email, preferences)
+            
+            logger.error(f"❌ [Appwrite] Error creating subscriber: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Unexpected error creating subscriber: {e}")
+            return False
+
+    async def get_subscriber(self, email: str) -> Optional[Dict]:
+        """Get subscriber by email"""
+        if not self.initialized:
+            return None
+            
+        try:
+            documents = self.tablesDB.list_rows(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                queries=[Query.equal("email", email)]
+            )
+            
+            if documents['total'] > 0:
+                return documents['documents'][0]
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error getting subscriber: {e}")
+            return None
+
+    async def update_subscriber(self, email: str, preferences: Dict[str, bool]) -> bool:
+        """Update subscriber preferences"""
+        if not self.initialized:
+            return False
+            
+        try:
+            # 1. Find document ID by email
+            subscriber = await self.get_subscriber(email)
+            if not subscriber:
+                return False
+            
+            doc_id = subscriber['$id']
+            
+            # 2. Prepare update data
+            data = {}
+            if "Morning" in preferences: data["sub_morning"] = preferences["Morning"]
+            if "Afternoon" in preferences: data["sub_afternoon"] = preferences["Afternoon"]
+            if "Evening" in preferences: data["sub_evening"] = preferences["Evening"]
+            if "Weekly" in preferences: data["sub_weekly"] = preferences["Weekly"]
+            if "Monthly" in preferences: data["sub_monthly"] = preferences["Monthly"]
+            
+            # Note: tablesDB wrapper now has update_row
+            self.tablesDB.update_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                document_id=doc_id,
+                data=data
+            )
+            logger.info(f"✅ [Appwrite] Subscriber updated: {email}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error updating subscriber: {e}")
+            return False
+
+    async def get_subscriber_by_token(self, token: str) -> Optional[Dict]:
+        """Get subscriber by unsubscribe token"""
+        try:
+            documents = self.tablesDB.list_rows(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                queries=[Query.equal("token", token)]
+            )
+            
+            if documents['total'] > 0:
+                return documents['documents'][0]
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error finding subscriber by token: {e}")
+            return None
+
+    async def update_article_audio(self, collection_id: str, document_id: str, audio_url: str) -> bool:
+        """Update article with audio URL"""
+        if not self.initialized:
+            return False
+            
+        try:
+            self.tablesDB.update_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=collection_id,
+                document_id=document_id,
+                data={'audio_url': audio_url}
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error updating article audio: {e}")
+            return False
+
+    async def update_subscription_status(self, email: str, preference: str, is_active: bool) -> bool:
+        """
+        Update specific subscription preference (Granular Unsubscribe)
+        """
+        if not self.initialized:
+            return False
+            
+        try:
+            subscriber = await self.get_subscriber(email)
+            if not subscriber:
+                return False
+            
+            # Map preference name to column name
+            field_map = {
+                "Morning": "sub_morning",
+                "Afternoon": "sub_afternoon",
+                "Evening": "sub_evening",
+                "Weekly": "sub_weekly",
+                "Monthly": "sub_monthly"
+            }
+            
+            field = field_map.get(preference)
+            if not field:
+                logger.error(f"Invalid preference: {preference}")
+                return False
+                
+            data = {field: is_active}
+            
+            self.tablesDB.update_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                document_id=subscriber['$id'],
+                data=data
+            )
+            logger.info(f"✅ [Appwrite] Updated {preference} for {email} to {is_active}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error updating subscription status: {e}")
+            return False
+
+    async def update_subscriber_status(self, email: str, subscribed: bool) -> bool:
+        """
+        Update global subscription status (Global Unsubscribe)
+        """
+        if not self.initialized:
+            return False
+            
+        try:
+            subscriber = await self.get_subscriber(email)
+            if not subscriber:
+                return False
+            
+            data = {"isActive": subscribed}
+            
+            self.tablesDB.update_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                document_id=subscriber['$id'],
+                data=data
+            )
+            logger.info(f"✅ [Appwrite] Global status for {email} set to {subscribed}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error updating global subscriber status: {e}")
+            return False
+
+    async def update_last_sent(self, email: str) -> bool:
+        """
+        Update lastSentAt timestamp for a subscriber
+        """
+        if not self.initialized:
+            return False
+            
+        try:
+            subscriber = await self.get_subscriber(email)
+            if not subscriber:
+                return False
+            
+            from datetime import datetime
+            import pytz
+            
+            # Store in UTC ISO format
+            utc_now = datetime.now(pytz.UTC).isoformat()
+            
+            self.tablesDB.update_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                document_id=subscriber['$id'],
+                data={'lastSentAt': utc_now}
+            )
+            # logger.debug(f"✅ [Appwrite] Updated lastSentAt for {email}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error updating lastSentAt: {e}")
+            return False
+
+    async def get_subscribers_by_preference(self, preference: str) -> List[Dict]:
+        """
+        Get all subscribers filtered by newsletter preference
+        Directly from Appwrite (Source of Truth)
+        """
+        if not self.initialized:
+            return []
+            
+        try:
+            # Map preference name to column name
+            field_map = {
+                "Morning": "sub_morning",
+                "Afternoon": "sub_afternoon",
+                "Evening": "sub_evening",
+                "Weekly": "sub_weekly",
+                "Monthly": "sub_monthly"
+            }
+            
+            field = field_map.get(preference)
+            
+            # Default fallback for safety (or if preference is invalid)
+            if not field:
+                logger.warning(f"⚠️ [Appwrite] Unknown preference '{preference}', defaulting to Weekly")
+                field = "sub_weekly"
+                
+            logger.info(f"🔍 [Appwrite] Fetching subscribers for {preference} ({field})...")
+            
+            # Query Logic:
+            # 1. Must be globally active (isActive=true)
+            # 2. Must be subscribed to specific preference (sub_X=true)
+            
+            documents = self.tablesDB.list_rows(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                queries=[
+                    Query.equal("isActive", True),
+                    Query.equal(field, True),
+                    Query.limit(1000) # Safety limit
+                ]
+            )
+            
+            subs = documents['documents']
+            logger.info(f"✅ [Appwrite] Found {len(subs)} subscribers for {preference}")
+            return subs
+            
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error getting subscribers by preference: {e}")
+            return []
+
+    async def update_article_audio(self, collection_id: str, document_id: str, audio_url: str) -> bool:
+        """Update article with audio URL"""
+        if not self.initialized:
+            return False
+            
+        try:
+            self.tablesDB.update_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=collection_id,
+                document_id=document_id,
+                data={'audio_url': audio_url}
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] Error updating article audio: {e}")
+            return False
+
+    async def get_database_stats(self) -> Dict:
         """
         Get database statistics
         

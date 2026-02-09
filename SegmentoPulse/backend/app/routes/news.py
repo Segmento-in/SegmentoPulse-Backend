@@ -3,6 +3,11 @@ from app.models import NewsResponse, ErrorResponse
 from app.services.news_aggregator import NewsAggregator
 from app.services.upstash_cache import get_upstash_cache  # New Upstash cache
 from app.services.appwrite_db import get_appwrite_db
+import logging
+
+# Configure logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 news_aggregator = NewsAggregator()
@@ -13,7 +18,8 @@ appwrite_db = get_appwrite_db()
 async def get_news_by_category(
     category: str,
     limit: int = 20,    # Items per page
-    cursor: str = None  # Cursor for pagination (replaces page number)
+    cursor: str = None,  # Cursor for pagination (replaces page number)
+    page: int = 1       # Fallback for legacy frontend (offset pagination)
 ):
     """
     Get news articles by category with cursor pagination and stale-while-revalidate
@@ -32,10 +38,9 @@ async def get_news_by_category(
     - Response includes: articles + next_cursor
     - Next request: GET /api/news/ai?limit=20&cursor=<next_cursor>
     
-    **Performance:**
-    - Page 1: 50ms (same as before)
-    - Page 100: 50ms (NOT 2-3 seconds!)
-    - Constant time regardless of page
+    **Fallback Support:**
+    - If `page` is provided without `cursor`, we fallback to OFFSET pagination.
+    - This allows legacy frontend code to work without refactoring.
     
     Categories: ai, data-security, cloud-computing, etc.
     """
@@ -46,8 +51,11 @@ async def get_news_by_category(
         # Validate limit
         limit = min(limit, 100)  # Max 100 items per page
         
-        # Build cache key
-        cache_key = f"news:{category}:cursor:{cursor or 'first'}:l{limit}"
+        # Build cache key (Include page/cursor)
+        if cursor:
+            cache_key = f"news_v3:{category}:cursor:{cursor}:l{limit}"
+        else:
+            cache_key = f"news_v3:{category}:page:{page}:l{limit}"
         
         # Try Upstash cache first (5 min TTL)
         if upstash_cache.enabled:
@@ -63,25 +71,54 @@ async def get_news_by_category(
                 )
         
         # Cache miss - fetch from database
-        # Build query filters with cursor
-        queries = CursorPagination.build_query_filters(cursor, category)
-        queries.append(Query.limit(limit + 1))  # Fetch one extra to check if more exist
+        queries = []
         
-        articles = await appwrite_db.get_articles_with_queries(queries)
+        # DECISION: OFFSET vs CURSOR
+        if not cursor and page > 1:
+            # Fallback: Offset Pagination (Legacy Support)
+            logger.info(f"🔄 [PAGINATION] Using OFFSET fallback for page {page}")
+            offset = (page - 1) * limit
+            
+            # Note: Appwrite only supports offset up to 5000 items
+            if offset > 5000:
+                raise HTTPException(status_code=400, detail="Offset limit reached (5000). Use cursor pagination.")
+                
+            queries = [
+                Query.equal('category', category),
+                Query.order_desc('published_at'),
+                Query.limit(limit),
+                Query.offset(offset)
+            ]
+        else:
+            # Default: Cursor Pagination (Preferred)
+            # Pass category to build_query_filters so it adds Query.equal('category', ...)
+            queries = CursorPagination.build_query_filters(cursor, category)
+            queries.append(Query.limit(limit + 1))  # Fetch one extra to check if more exist
         
-        # Check if more pages exist
-        has_more = len(articles) > limit
-        if has_more:
-            articles = articles[:limit]  # Remove the extra one
+        # ROUTING: Explicitly pass category to ensure correct collection is selected
+        articles = await appwrite_db.get_articles_with_queries(queries, category=category)
         
-        # Generate next cursor from last article
+        # Handle "one extra" logic ONLY for Cursor Pagination
+        has_more = False
         next_cursor = None
-        if has_more and articles:
-            last_article = articles[-1]
-            next_cursor = CursorPagination.encode_cursor(
-                last_article.get('publishedAt') or last_article.get('published_at'),
-                last_article.get('$id')
-            )
+        
+        if not cursor and page > 1:
+             # Offset mode: We don't fetch extra item, checking has_more is harder without total count
+             # Typically assume has_more if len(articles) == limit
+             has_more = len(articles) == limit
+        else:
+            # Cursor mode
+            has_more = len(articles) > limit
+            if has_more:
+                articles = articles[:limit]  # Remove the extra one
+            
+            # Generate next cursor from last article
+            if has_more and articles:
+                last_article = articles[-1]
+                next_cursor = CursorPagination.encode_cursor(
+                    last_article.get('publishedAt') or last_article.get('published_at'),
+                    last_article.get('$id')
+                )
         
         response_data = NewsResponse(
             success=True,
@@ -103,6 +140,9 @@ async def get_news_by_category(
         return response_data
         
     except Exception as e:
+        import traceback
+        traceback.print_exc() 
+        logger.error(f"Error fetching news: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

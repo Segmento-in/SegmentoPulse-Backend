@@ -1,10 +1,8 @@
 from fastapi import FastAPI
+import warnings
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.config import settings
-from app.routes import news, search, analytics, subscription, admin
-import warnings
-
 # Suppress Pydantic V2 warnings from LangChain (known upstream issue)
 try:
     from pydantic.warnings import PydanticDeprecatedSince20
@@ -16,6 +14,9 @@ except ImportError:
 # Catch 'create_document', 'list_documents', etc.
 warnings.filterwarnings("ignore", message=".*Call to deprecated function.*")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain_groq")
+
+# Import routes AFTER warnings config
+from app.routes import news, search, analytics, subscription, admin, audio
 
 # Import scheduler functions
 from app.services.scheduler import start_scheduler, shutdown_scheduler
@@ -69,14 +70,12 @@ app.include_router(search.router, prefix="/api/search", tags=["Search"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(subscription.router, tags=["Subscription"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+app.include_router(audio.router, prefix="/api/audio", tags=["Audio"])
 
 # Phase 3: Engagement tracking
 from app.routes import engagement
 app.include_router(engagement.router, prefix="/api/engagement", tags=["Engagement"])
 
-# Phase 4: Advanced Hybrid Search (V2)
-from app.routes import search_v2
-app.include_router(search_v2.router, prefix="/api/search", tags=["Search V2"])
 
 # Phase 5: Monitoring and Metrics
 from app.routes import monitoring
@@ -133,6 +132,7 @@ async def health_check():
         }
     }
 
+# Force reload
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(

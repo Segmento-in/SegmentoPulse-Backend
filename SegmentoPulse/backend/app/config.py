@@ -15,8 +15,12 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
-    # CORS
-    CORS_ORIGINS: List[str] = ["https://segmento.in"]
+    # CORS - Supports both production and local development
+    CORS_ORIGINS: List[str] = [
+        "https://segmento.in",      # Production frontend
+        "http://localhost:3000",    # Local dev frontend
+        "http://127.0.0.1:3000"     # Alternative local dev
+    ]
     
     # News API
     NEWS_API_KEY: str = ""
@@ -59,14 +63,23 @@ class Settings(BaseSettings):
     # Frontend URL (for unsubscribe links)
     FRONTEND_URL: str = "https://segmento.in"
     
+    # AI Services
+    GROQ_API_KEY: str = ""
+    
     # Appwrite Database
     APPWRITE_ENDPOINT: str = "https://nyc.cloud.appwrite.io/v1"
-    APPWRITE_PROJECT_ID: str = ""
-    APPWRITE_API_KEY: str = ""
+    APPWRITE_PROJECT_ID: str = "6968b8e300371c58c21a"
+    APPWRITE_API_KEY: str = "standard_ea4de288498a3c1dba1bd02dcc3a58e86abd68f5f10cbf1e4f5365f5e184b55dbbb54ba82f9a6476a5b415566b774ad4d50cf32ac7336e9660698a40929113b576c7dead7d845e9f8c9d6b871ddb9b05223bc347f5abde15573742a3e0b4064fbf653e1c1feda2d027bd5c08d4d49068e3d781dafddd2ae010d9eaed395e60d0"
     APPWRITE_DATABASE_ID: str = "segmento_db"
     APPWRITE_COLLECTION_ID: str = "articles"  # Regular articles
-    APPWRITE_CLOUD_COLLECTION_ID: str = ""  # Phase 3: Cloud news (to be created)
-    
+    APPWRITE_SUBSCRIBERS_COLLECTION_ID: str = "subscribers"
+    APPWRITE_AUDIO_BUCKET_ID: str = "audio-summaries"
+    # New Collection IDs
+    APPWRITE_AI_COLLECTION_ID: str ="6985d84600311fce57c2"
+    APPWRITE_DATA_COLLECTION_ID: str ="69845bcf00095c406439"
+    APPWRITE_CLOUD_COLLECTION_ID: str ="cloud_articles"
+    APPWRITE_MAGAZINE_COLLECTION_ID: str ="69845cdd001712f4ac41"
+    APPWRITE_MEDIUM_COLLECTION_ID: str ="69845cf100332a456f74"
     # Admin Alerting (Optional - Discord/Slack webhook URL)
     ADMIN_WEBHOOK_URL: Optional[str] = None
     
@@ -81,7 +94,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True
+        case_sensitive=True,
+        extra="ignore"
     )
 
 settings = Settings()

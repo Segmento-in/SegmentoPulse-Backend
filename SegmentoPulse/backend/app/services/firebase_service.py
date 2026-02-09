@@ -7,7 +7,7 @@ except ImportError:
     print("Firebase not available - analytics disabled")
 
 from typing import Optional
-import base64
+
 from app.config import settings
 
 class FirebaseService:
@@ -94,11 +94,9 @@ class FirebaseService:
     
     def _get_article_id(self, article_url: str) -> str:
         """Generate article ID from URL"""
-        # Base64 encode and sanitize
-        encoded = base64.b64encode(article_url.encode()).decode()
-        # Remove non-alphanumeric characters and limit length
-        sanitized = ''.join(c for c in encoded if c.isalnum())[:100]
-        return sanitized
+        # Use SHA-256 hash (same as main DB) to ensure consistency
+        import hashlib
+        return hashlib.sha256(article_url.encode()).hexdigest()[:32]
     
     async def increment_view(self, article_url: str) -> int:
         """Increment view count for an article"""

@@ -207,8 +207,8 @@ async def send_scheduled_newsletter(preference: str) -> Dict[str, int]:
         return {"sent": 0, "failed": 0, "skipped": "no_articles", "alert": True}
     
     # SAFETY CHECK #2: Get subscribers for this preference
-    firebase = get_firebase_service()
-    subscribers = firebase.get_subscribers_by_preference(preference)
+    appwrite_db = get_appwrite_db()
+    subscribers = await appwrite_db.get_subscribers_by_preference(preference)
     
     if not subscribers or len(subscribers) == 0:
         print(f"ℹ️ SKIP: No active subscribers for {preference} preference.")
@@ -276,7 +276,7 @@ async def send_scheduled_newsletter(preference: str) -> Dict[str, int]:
         for i, subscriber in enumerate(subscribers[:sent_count]):
             email = subscriber.get('email')
             if email:
-                firebase.update_last_sent(email)
+                await appwrite_db.update_last_sent(email)
     
     return result
 
