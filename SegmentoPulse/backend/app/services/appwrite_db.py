@@ -403,11 +403,8 @@ class AppwriteDatabase:
                     if 'image_url' in document_data:
                         document_data['image'] = document_data.pop('image_url')
                     
-                    # FIX: Cloud collection uses legacy 'publishedAt' attribute, not 'published_at'
-                    # Based on logs, other collections accept 'published_at' (snake_case)
-                    # But Cloud might strictly require 'publishedAt' (camelCase)
-                    if 'published_at' in document_data:
-                         document_data['publishedAt'] = document_data.pop('published_at')
+                    # NOTE: Cloud collection DOES accept 'published_at' (snake_case)
+                    # Only the 'image' field uses legacy naming
 
                 # Try to create document
                 self.tablesDB.create_row(
