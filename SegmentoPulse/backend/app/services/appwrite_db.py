@@ -398,6 +398,16 @@ class AppwriteDatabase:
                 if target_collection_id == settings.APPWRITE_CLOUD_COLLECTION_ID:
                     document_data['provider'] = document_data['source']
                     document_data['is_official'] = False # Default to False
+                    
+                    # FIX: Cloud collection uses legacy 'image' attribute, not 'image_url'
+                    if 'image_url' in document_data:
+                        document_data['image'] = document_data.pop('image_url')
+                    
+                    # FIX: Cloud collection uses legacy 'publishedAt' attribute, not 'published_at'
+                    # Based on logs, other collections accept 'published_at' (snake_case)
+                    # But Cloud might strictly require 'publishedAt' (camelCase)
+                    if 'published_at' in document_data:
+                         document_data['publishedAt'] = document_data.pop('published_at')
 
                 # Try to create document
                 self.tablesDB.create_row(
