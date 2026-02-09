@@ -65,15 +65,18 @@ def is_valid_article(article: Union[Dict, 'Article']) -> bool:
         return False
     
     # Required: Published date
-    if not article_dict.get('publishedAt'):
+    if not (article_dict.get('publishedAt') or article_dict.get('published_at')):
         return False
     
     # Optional but validate if present: Image URL
-    if article_dict.get('image'):
-        image_url = article_dict['image'].strip()
-        if image_url and not image_url.startswith(('http://', 'https://')):
-            # Invalid image URL - set to None
-            article_dict['image'] = None
+    # Handle both 'image' (raw API) and 'image_url' (Pydantic/DB)
+    image_url = article_dict.get('image') or article_dict.get('image_url')
+    if image_url:
+        image_url = str(image_url).strip()
+        if not image_url.startswith(('http://', 'https://')):
+            # Invalid image URL - remove both keys to be safe
+            if 'image' in article_dict: article_dict['image'] = None
+            if 'image_url' in article_dict: article_dict['image_url'] = None
     
     return True
 
@@ -112,10 +115,12 @@ def sanitize_article(article: Union[Dict, 'Article']) -> Dict:
     description = re.sub(r'\s+', ' ', description)
     description = description[:2000]
     
-    # Clean image URL
-    image_url = article_dict.get('image', '').strip() if article_dict.get('image') else None
+    # Clean image URL - Support both keys
+    raw_image = article_dict.get('image') or article_dict.get('image_url')
+    image_url = str(raw_image).strip() if raw_image else None
+    
     if image_url:
-        image_url = image_url[:1000]
+        image_url = image_url[:2048] # Increased to match DB schema (was 1000)
         if not image_url.startswith(('http://', 'https://')):
             image_url = None
     
@@ -130,16 +135,32 @@ def sanitize_article(article: Union[Dict, 'Article']) -> Dict:
     quality_score = calculate_quality_score(article_dict)
     
     # Handle publishedAt (convert datetime to ISO string if needed)
-    published_at = article_dict.get('publishedAt')
+    # Check both keys
+    published_at = article_dict.get('publishedAt') or article_dict.get('published_at')
+    
     if isinstance(published_at, datetime):
         published_at = published_at.isoformat()
+    elif not published_at:
+        # Fallback to current time if missing
+        published_at = datetime.now().isoformat()
+    
+    # Return standardized dict (using camelCase for legacy compatibility or standardized snake_case?)
+    # The AppwriteDatabase understands both, checking 'published_at' OR 'publishedAt'.
+    # But usually it's best to standardize on what the DB considers 'canonical'.
+    # However, this function `sanitize_article` returns a dict that replaces the original object.
+    # We should probably return both or standardize on snake_case?
+    # Existing code returned 'publishedAt', 'image'.
+    # Let's keep returning 'publishedAt' for backward compat with whatever else uses this,
+    # BUT explicitly set the values we found.
     
     return {
         'title': title,
         'url': url,
         'description': description or '',
-        'image': image_url,
-        'publishedAt': published_at,
+        'image': image_url, # Legacy key
+        'image_url': image_url, # Modern key
+        'publishedAt': published_at, # Legacy key
+        'published_at': published_at, # Modern key
         'source': source,
         'category': article_dict.get('category', '').strip()[:100],
         'slug': slug,

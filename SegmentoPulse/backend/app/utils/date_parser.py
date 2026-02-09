@@ -74,19 +74,25 @@ def normalize_article_date(article):
         article_dict = dict(article)
     
     # Normalize the date
-    if 'publishedAt' in article_dict:
-        published_at = article_dict['publishedAt']
+    # Check both keys
+    published_at = article_dict.get('publishedAt') or article_dict.get('published_at')
+    
+    if published_at:
         # Handle datetime objects
         if isinstance(published_at, datetime):
-            article_dict['publishedAt'] = published_at.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+            iso_date = published_at.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
         elif isinstance(published_at, str):
-            article_dict['publishedAt'] = parse_date_to_iso(published_at)
+            iso_date = parse_date_to_iso(published_at)
         else:
             # Unknown type, use current time
-            article_dict['publishedAt'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            iso_date = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     else:
         # If missing, use current time
-        article_dict['publishedAt'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        iso_date = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    
+    # Set both keys to ensure compatibility
+    article_dict['publishedAt'] = iso_date
+    article_dict['published_at'] = iso_date
     
     return article_dict
 
