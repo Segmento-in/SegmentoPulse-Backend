@@ -400,8 +400,20 @@ class AppwriteDatabase:
                     document_data['is_official'] = False # Default to False
                     
                     # FIX: Cloud collection uses legacy 'image' attribute, not 'image_url'
-                    if 'image_url' in document_data:
-                        document_data['image'] = document_data.pop('image_url')
+                    # CRITICAL: Cloud collection validates URLs strictly - must be a valid URL or None
+                    image_value = document_data.pop('image_url', None)
+                    
+                    # Validate that image_value is a proper URL
+                    if image_value and isinstance(image_value, str) and image_value.strip():
+                        # Check if it's a valid URL format (starts with http/https)
+                        if image_value.startswith(('http://', 'https://')):
+                            document_data['image'] = image_value
+                        else:
+                            # Invalid URL format - set to None
+                            document_data['image'] = None
+                    else:
+                        # Empty or None - set to None
+                        document_data['image'] = None
                     
                     # NOTE: Cloud collection DOES accept 'published_at' (snake_case)
                     # Only the 'image' field uses legacy naming
