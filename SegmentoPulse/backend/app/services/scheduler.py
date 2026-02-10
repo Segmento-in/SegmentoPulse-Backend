@@ -560,7 +560,8 @@ async def trigger_newsletter_now(preference: str):
     """Manually trigger newsletter"""
     from app.services.newsletter_service import send_scheduled_newsletter
     logger.info(f"🔧 [MANUAL TRIGGER] Running {preference} newsletter job NOW...")
-    await send_scheduled_newsletter(preference)
+    result = await send_scheduled_newsletter(preference)
+    return result
 
 
 

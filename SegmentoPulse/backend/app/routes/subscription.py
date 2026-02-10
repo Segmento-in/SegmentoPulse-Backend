@@ -238,17 +238,17 @@ async def unsubscribe_post(request: UnsubscribeRequest):
 
 @router.get("/subscribers/count")
 async def get_subscriber_count():
-    """Get total number of active subscribers"""
+    """Get total number of active subscribers from Appwrite"""
     try:
-        firebase = get_firebase_service()
-        subscribers = firebase.get_all_subscribers()
+        appwrite_db = get_appwrite_db()
+        subscribers = await appwrite_db.get_all_subscribers()
         
-        active_count = sum(1 for s in subscribers if s.get('subscribed', True))
+        active_count = sum(1 for s in subscribers if s.get('isActive', True))
         
         return {
             "total": len(subscribers),
             "active": active_count,
-            "unsubscribed": len(subscribers) - active_count
+            "inactive": len(subscribers) - active_count
         }
         
     except Exception as e:
@@ -265,19 +265,19 @@ async def send_newsletter(
     category: str = "ai"
 ):
     """
-    Send newsletter to all subscribers
+    Send newsletter to all subscribers (LEGACY ENDPOINT - Use scheduled newsletters instead)
     
     - Fetches latest news from specified category
     - Sends to all active subscribers
     - Returns send statistics
     """
     try:
-        firebase = get_firebase_service()
+        appwrite_db = get_appwrite_db()
         brevo = get_brevo_service()
         
-        # Get all active subscribers
-        subscribers = firebase.get_all_subscribers()
-        active_subscribers = [s for s in subscribers if s.get('subscribed', True)]
+        # Get all active subscribers from Appwrite
+        subscribers = await appwrite_db.get_all_subscribers()
+        active_subscribers = [s for s in subscribers if s.get('isActive', True)]
         
         if not active_subscribers:
             return {

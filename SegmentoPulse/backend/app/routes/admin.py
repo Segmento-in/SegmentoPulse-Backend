@@ -445,7 +445,7 @@ async def send_newsletter_now(preference: str = "Weekly"):
 @router.get("/subscribers/analytics")
 async def get_subscriber_analytics():
     """
-    Get subscriber distribution by preference
+    Get subscriber distribution by preference from Appwrite
     
     Shows how many subscribers have chosen each newsletter timing.
     Useful for understanding user preferences and planning content strategy.
@@ -454,17 +454,17 @@ async def get_subscriber_analytics():
         Total active subscribers and breakdown by preference
     """
     try:
-        from app.services.firebase_service import get_firebase_service
+        from app.services.appwrite_db import get_appwrite_db
         
-        firebase = get_firebase_service()
+        appwrite_db = get_appwrite_db()
         
-        if not firebase.initialized:
+        if not appwrite_db.initialized:
             raise HTTPException(
                 status_code=503,
-                detail="Firebase service not available"
+                detail="Appwrite database not available"
             )
         
-        all_subscribers = firebase.get_all_subscribers()
+        all_subscribers = await appwrite_db.get_all_subscribers()
         
         # Calculate preference distribution
         preference_counts = {
@@ -479,18 +479,26 @@ async def get_subscriber_analytics():
         total_count = len(all_subscribers)
         
         for sub in all_subscribers:
-            if sub.get('subscribed', True):
+            if sub.get('isActive', True):
                 active_count += 1
-                pref = sub.get('preference', 'Weekly')
-                if pref in preference_counts:
-                    preference_counts[pref] += 1
+                # Count each preference subscription
+                if sub.get('sub_morning', False):
+                    preference_counts['Morning'] += 1
+                if sub.get('sub_afternoon', False):
+                    preference_counts['Afternoon'] += 1
+                if sub.get('sub_evening', False):
+                    preference_counts['Evening'] += 1
+                if sub.get('sub_weekly', False):
+                    preference_counts['Weekly'] += 1
+                if sub.get('sub_monthly', False):
+                    preference_counts['Monthly'] += 1
         
         return {
             "total_subscribers": total_count,
             "active_subscribers": active_count,
-            "unsubscribed": total_count - active_count,
+            "inactive": total_count - active_count,
             "distribution_by_preference": preference_counts,
-            " percentage_distribution": {
+            "percentage_distribution": {
                 pref: round((count / active_count * 100), 2) if active_count > 0 else 0
                 for pref, count in preference_counts.items()
             }

@@ -281,13 +281,9 @@ async def send_scheduled_newsletter(preference: str) -> Dict[str, int]:
     return result
 
 
-def get_subscribers_by_preference(preference: str) -> List[Dict]:
-    """
-    Helper function to get subscribers for a specific preference.
-    Used by admin endpoints and testing.
-    """
-    firebase = get_firebase_service()
-    return firebase.get_subscribers_by_preference(preference)
+
+# Note: Subscriber queries now use Appwrite directly via appwrite_db.get_subscribers_by_preference()
+# See newsletter_service.py line 211
 
 
 async def preview_newsletter_content(preference: str) -> Dict:
