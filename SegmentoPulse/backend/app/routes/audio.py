@@ -8,7 +8,7 @@ from app.services.appwrite_db import get_appwrite_db
 from app.services.audio_service import audio_service
 from app.config import settings
 
-router = APIRouter(prefix="/api/audio", tags=["audio"])
+router = APIRouter()
 
 class AudioGenerationRequest(BaseModel):
     article_url: str
