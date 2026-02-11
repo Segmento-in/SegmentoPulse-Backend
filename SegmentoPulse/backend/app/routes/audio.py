@@ -20,7 +20,88 @@ class AudioGenerationRequest(BaseModel):
 class AudioResponse(BaseModel):
     success: bool
     audio_url: str
+    text_summary: Optional[str] = None
     message: str
+
+
+async def _find_article(appwrite, article_id: str, category: Optional[str] = None):
+    """
+    Helper to find an article across multiple collections.
+    Returns (article, collection_id) or (None, None).
+    """
+    target_collection_ids = []
+    if category:
+        # Resolve category to collection ID if possible
+        # Note: appwrite.get_collection_id might need self/instance access or be static?
+        # appwrite_db.py defines get_collection_id as instance method.
+        # We passed 'appwrite' instance.
+        try:
+            target_collection_ids.append(appwrite.get_collection_id(category))
+        except:
+            pass
+    
+    # Always fallback to checking ALL known collections if not found (Safety Net)
+    fallback_collections = [
+        settings.APPWRITE_COLLECTION_ID,
+        settings.APPWRITE_CLOUD_COLLECTION_ID,
+        settings.APPWRITE_AI_COLLECTION_ID,
+        settings.APPWRITE_DATA_COLLECTION_ID,
+        settings.APPWRITE_MAGAZINE_COLLECTION_ID,
+        settings.APPWRITE_MEDIUM_COLLECTION_ID
+    ]
+    
+    for cid in fallback_collections:
+        if cid and cid not in target_collection_ids:
+            target_collection_ids.append(cid)
+    
+    # Try to find article in target collections
+    for collection_id in target_collection_ids:
+        try:
+            article = appwrite.tablesDB.get_row(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=collection_id,
+                document_id=article_id
+            )
+            print(f"✅ Found article in collection: {collection_id}")
+            return article, collection_id
+        except Exception:
+            continue
+            
+    return None, None
+
+@router.get("/status", response_model=AudioResponse)
+async def get_audio_status(article_url: str, category: Optional[str] = None):
+    """
+    Check if audio/text summary exists for an article.
+    """
+    try:
+        appwrite = get_appwrite_db()
+        import hashlib
+        url_hash = hashlib.sha256(article_url.encode()).hexdigest()
+        article_id = url_hash[:32]
+        
+        article, _ = await _find_article(appwrite, article_id, category)
+        
+        if article:
+            return AudioResponse(
+                success=True,
+                audio_url=article.get('audio_url') or "",
+                text_summary=article.get('text_summary'),
+                message="Article found"
+            )
+        else:
+            return AudioResponse(
+                success=False,
+                audio_url="",
+                message="Article not found"
+            )
+    except Exception as e:
+        print(f"Error fetching status: {e}")
+        return AudioResponse(
+            success=False,
+            audio_url="",
+            message=str(e)
+        )
 
 @router.post("/generate", response_model=AudioResponse)
 async def generate_audio_summary(request: AudioGenerationRequest):
@@ -40,49 +121,13 @@ async def generate_audio_summary(request: AudioGenerationRequest):
         from appwrite.query import Query
         
         # 1. Fetch Article by URL
-        # FIX: Use multi-collection search like engagement endpoints
-        # Re-implement ID generation logic to find the doc directly
         import hashlib
         url_hash = hashlib.sha256(request.article_url.encode()).hexdigest()
         article_id = url_hash[:32]
         
         print(f"🔑 Generated Article ID: {article_id}")
         
-        # Determine strict collection if category provided
-        target_collection_ids = []
-        if request.category:
-            target_collection_ids.append(appwrite.get_collection_id(request.category))
-        
-        # Always fallback to checking ALL known collections if not found (Safety Net)
-        fallback_collections = [
-            settings.APPWRITE_COLLECTION_ID,
-            settings.APPWRITE_CLOUD_COLLECTION_ID,
-            settings.APPWRITE_AI_COLLECTION_ID,
-            settings.APPWRITE_DATA_COLLECTION_ID,
-            settings.APPWRITE_MAGAZINE_COLLECTION_ID,
-            settings.APPWRITE_MEDIUM_COLLECTION_ID
-        ]
-        
-        for cid in fallback_collections:
-            if cid and cid not in target_collection_ids:
-                target_collection_ids.append(cid)
-        
-        article = None
-        found_collection_id = None
-        
-        # Try to find article in target collections
-        for collection_id in target_collection_ids:
-            try:
-                article = appwrite.tablesDB.get_row(
-                    database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=collection_id,
-                    document_id=article_id
-                )
-                found_collection_id = collection_id
-                print(f"✅ Found article in collection: {collection_id}")
-                break
-            except Exception:
-                continue
+        article, found_collection_id = await _find_article(appwrite, article_id, request.category)
         
         # If not found, create it
         if not article:
@@ -130,6 +175,7 @@ async def generate_audio_summary(request: AudioGenerationRequest):
             return AudioResponse(
                 success=True,
                 audio_url=article['audio_url'],
+                text_summary=article.get('text_summary'), # Return existing summary if present
                 message="Audio already exists"
             )
             
@@ -187,12 +233,14 @@ async def generate_audio_summary(request: AudioGenerationRequest):
         update_success = await appwrite.update_article_audio(
             collection_id=found_collection_id,
             document_id=article_id,
-            audio_url=audio_url
+            audio_url=audio_url,
+            text_summary=summary # Pass generated summary
         )
         
         return AudioResponse(
             success=True,
             audio_url=audio_url,
+            text_summary=summary,
             message="Audio generated successfully"
         )
 

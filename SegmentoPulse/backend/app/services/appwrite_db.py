@@ -812,17 +812,21 @@ class AppwriteDatabase:
             logger.error(f"❌ [Appwrite] Error getting subscribers by preference: {e}")
             return []
 
-    async def update_article_audio(self, collection_id: str, document_id: str, audio_url: str) -> bool:
-        """Update article with audio URL"""
+    async def update_article_audio(self, collection_id: str, document_id: str, audio_url: str, text_summary: Optional[str] = None) -> bool:
+        """Update article with audio URL and optional text summary"""
         if not self.initialized:
             return False
             
         try:
+            data = {'audio_url': audio_url}
+            if text_summary:
+                data['text_summary'] = text_summary
+                
             self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
                 document_id=document_id,
-                data={'audio_url': audio_url}
+                data=data
             )
             return True
         except Exception as e:

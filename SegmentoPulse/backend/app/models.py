@@ -16,6 +16,7 @@ class Article(BaseModel):
     source: Optional[str] = ""
     category: Optional[str] = ""
     audio_url: Optional[str] = None # URL to audio summary
+    text_summary: Optional[str] = None # Generated text summary
     
     # Engagement Stats (Side-loaded)
     likes: int = 0
