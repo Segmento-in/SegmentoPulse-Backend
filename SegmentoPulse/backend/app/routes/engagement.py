@@ -70,7 +70,8 @@ async def get_article_stats(article_id: str, category: Optional[str] = None):
             settings.APPWRITE_AI_COLLECTION_ID,
             settings.APPWRITE_DATA_COLLECTION_ID,
             settings.APPWRITE_MAGAZINE_COLLECTION_ID,
-            settings.APPWRITE_MEDIUM_COLLECTION_ID
+            settings.APPWRITE_MEDIUM_COLLECTION_ID,
+            settings.APPWRITE_RESEARCH_COLLECTION_ID
         ]
         
         for cid in fallback_collections:
@@ -82,7 +83,7 @@ async def get_article_stats(article_id: str, category: Optional[str] = None):
         
         for collection_id in target_collection_ids:
             try:
-                doc = appwrite_db.tablesDB.get_row(
+                doc = await appwrite_db.tablesDB.get_row(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=collection_id,
                     document_id=doc_id
@@ -106,7 +107,7 @@ async def get_article_stats(article_id: str, category: Optional[str] = None):
         return {
             "article_id": doc_id,
             "likes": doc.get('likes', 0),
-            "dislikes": doc.get('dislike', 0),
+            "dislikes": doc.get('dislikes') or doc.get('dislike', 0),
             "views": doc.get('views', 0),
             "success": True
         }
@@ -144,7 +145,7 @@ async def like_article(article_id: str, request: EngagementRequest = None):
         
         # 1. Try to get document from the TARGETED collection
         try:
-            doc = appwrite_db.tablesDB.get_row(
+            doc = await appwrite_db.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=target_collection_id,
                 document_id=doc_id
@@ -169,14 +170,14 @@ async def like_article(article_id: str, request: EngagementRequest = None):
                     
                     logger.info(f"📝 Creating new article with data: {new_doc}")
                     
-                    appwrite_db.tablesDB.create_row(
+                    await appwrite_db.tablesDB.create_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=target_collection_id,
                         document_id=doc_id,
                         data=new_doc
                     )
                     # Fetch the newly created doc
-                    doc = appwrite_db.tablesDB.get_row(
+                    doc = await appwrite_db.tablesDB.get_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=target_collection_id,
                         document_id=doc_id
@@ -194,7 +195,7 @@ async def like_article(article_id: str, request: EngagementRequest = None):
             
         new_likes = current_likes + 1
         
-        updated_doc = appwrite_db.tablesDB.update_row(
+        updated_doc = await appwrite_db.tablesDB.update_row(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=target_collection_id,
             document_id=doc_id,
@@ -234,7 +235,7 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
             target_collection_id = appwrite_db.get_collection_id(request.category)
         
         try:
-            doc = appwrite_db.tablesDB.get_row(
+            doc = await appwrite_db.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=target_collection_id,
                 document_id=doc_id
@@ -255,13 +256,13 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
                         "views": 0,
                         "category": request.category or "wildcard"
                     }
-                    appwrite_db.tablesDB.create_row(
+                    await appwrite_db.tablesDB.create_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=target_collection_id,
                         document_id=doc_id,
                         data=new_doc
                     )
-                    doc = appwrite_db.tablesDB.get_row(
+                    doc = await appwrite_db.tablesDB.get_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=target_collection_id,
                         document_id=doc_id
@@ -271,23 +272,33 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
             else:
                 raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
         
-        current_dislikes = doc.get('dislike', 0)
+        current_dislikes = doc.get('dislikes') or doc.get('dislike', 0)
         if current_dislikes is None: current_dislikes = 0
             
         new_dislikes = current_dislikes + 1
         
-        updated_doc = appwrite_db.tablesDB.update_row(
+        # Schema Compat: Research uses 'dislikes' (plural), others use 'dislike' (singular)
+        update_data = {}
+        if target_collection_id == settings.APPWRITE_RESEARCH_COLLECTION_ID:
+            update_data = {"dislikes": new_dislikes}
+        else:
+            update_data = {"dislike": new_dislikes}
+
+        updated_doc = await appwrite_db.tablesDB.update_row(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=target_collection_id,
             document_id=doc_id,
-            data={"dislike": new_dislikes}
+            data=update_data
         )
+        
+        # Return result (normalize key)
+        final_dislikes = updated_doc.get('dislikes') if 'dislikes' in updated_doc else updated_doc.get('dislike')
         
         logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {updated_doc['dislike']})")
         
         return {
             "article_id": doc_id,
-            "dislikes": updated_doc['dislike'],
+            "dislikes": final_dislikes,
             "success": True
         }
         
@@ -316,7 +327,7 @@ async def track_view(article_id: str, request: EngagementRequest = None):
             target_collection_id = appwrite_db.get_collection_id(request.category)
         
         try:
-            doc = appwrite_db.tablesDB.get_row(
+            doc = await appwrite_db.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=target_collection_id,
                 document_id=doc_id
@@ -336,13 +347,13 @@ async def track_view(article_id: str, request: EngagementRequest = None):
                         "views": 0,
                         "category": request.category or "wildcard"
                     }
-                    appwrite_db.tablesDB.create_row(
+                    await appwrite_db.tablesDB.create_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=target_collection_id,
                         document_id=doc_id,
                         data=new_doc
                     )
-                    doc = appwrite_db.tablesDB.get_row(
+                    doc = await appwrite_db.tablesDB.get_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=target_collection_id,
                         document_id=doc_id
@@ -359,7 +370,7 @@ async def track_view(article_id: str, request: EngagementRequest = None):
             
         new_views = current_views + 1
         
-        updated_doc = appwrite_db.tablesDB.update_row(
+        updated_doc = await appwrite_db.tablesDB.update_row(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=target_collection_id,
             document_id=doc_id,
@@ -414,11 +425,11 @@ async def get_trending_articles(
             collection_id = settings.APPWRITE_COLLECTION_ID
         
         # Query articles, sorted by views (descending)
-        response = appwrite_db.tablesDB.list_rows(
+        response = await appwrite_db.tablesDB.list_rows(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=collection_id,
             queries=[
-                Query.greater_than('publishedAt', cutoff),
+                Query.greater_than('published_at', cutoff),
                 Query.order_desc('views'),
                 Query.limit(limit)
             ]
@@ -431,7 +442,7 @@ async def get_trending_articles(
         for article in articles:
             views = article.get('views', 0)
             likes = article.get('likes', 0)
-            dislikes = article.get('dislike', 0)
+            dislikes = article.get('dislikes') or article.get('dislike', 0)
             article['engagement_score'] = views + (likes * 5) - (dislikes * 3)
         
         # Sort by engagement score
@@ -482,7 +493,7 @@ async def get_popular_cloud_articles(provider: Optional[str] = None, limit: int 
         if provider:
             queries.insert(0, Query.equal('provider', provider))
         
-        response = appwrite_db.tablesDB.list_rows(
+        response = await appwrite_db.tablesDB.list_rows(
             database_id=settings.APPWRITE_DATABASE_ID,
             collection_id=settings.APPWRITE_CLOUD_COLLECTION_ID,
             queries=queries

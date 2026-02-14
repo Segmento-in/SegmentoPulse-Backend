@@ -1,6 +1,19 @@
+import asyncio
+import sys
 from fastapi import FastAPI
 import warnings
 from fastapi.middleware.cors import CORSMiddleware
+
+# Windows-specific fix for Playwright + asyncio subprocesses
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass
+
 from contextlib import asynccontextmanager
 from app.config import settings
 # Suppress Pydantic V2 warnings from LangChain (known upstream issue)
@@ -22,27 +35,31 @@ from app.routes import news, search, analytics, subscription, admin, audio
 from app.services.scheduler import start_scheduler, shutdown_scheduler
 
 
+from app.services.browser_manager import browser_manager
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Application lifespan manager
     
     Handles startup and shutdown events for background tasks:
-    - Startup: Initialize and start APScheduler
-    - Shutdown: Gracefully stop all background jobs
+    - Startup: Initialize and start APScheduler, BrowserManager
+    - Shutdown: Gracefully stop all background jobs and BrowserManager
     """
-    # Startup: Start background scheduler
+    # Startup: Start background scheduler and browser
     print("=" * 60)
     print("🚀 Starting Segmento Pulse Backend...")
     start_scheduler()
+    await browser_manager.start()
     print("=" * 60)
     
     yield  # Application runs here
     
-    # Shutdown: Stop background scheduler
+    # Shutdown: Stop background scheduler and browser
     print("=" * 60)
     print("👋 Shutting down Segmento Pulse Backend...")
     shutdown_scheduler()
+    await browser_manager.shutdown()
     print("=" * 60)
 
 
@@ -71,6 +88,10 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(subscription.router, tags=["Subscription"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(audio.router, prefix="/api/audio", tags=["Audio"])
+
+# Phase 6: Research Papers
+from app.routes import research
+app.include_router(research.router, prefix="/api/research", tags=["Research"])
 
 # Phase 3: Engagement tracking
 from app.routes import engagement

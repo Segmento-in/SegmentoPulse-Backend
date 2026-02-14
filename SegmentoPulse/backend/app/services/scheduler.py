@@ -14,6 +14,7 @@ from app.services.news_aggregator import NewsAggregator
 from app.services.appwrite_db import get_appwrite_db
 from app.services.cache_service import CacheService
 from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
+from app.services.research_aggregator import ResearchAggregator
 from app.config import settings
 
 # Setup logging
@@ -210,6 +211,27 @@ async def fetch_all_news():
         adaptive.print_summary()
 
 
+async def fetch_daily_research():
+    """
+    Background Job: Fetch Research Papers from ArXiv
+    Runs daily at 02:00 IST
+    """
+    logger.info("═" * 80)
+    logger.info("🔬 [RESEARCH FETCHER] Starting daily research fetch...")
+    logger.info("🕐 Start Time: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("═" * 80)
+    
+    try:
+        aggregator = ResearchAggregator()
+        saved_count = await aggregator.fetch_and_process_daily_papers()
+        logger.info(f"✅ [RESEARCH FETCHER] Completed. Saved {saved_count} new papers.")
+        
+    except Exception as e:
+        logger.error(f"❌ [RESEARCH FETCHER] Failed: {e}", exc_info=True)
+    
+    logger.info("═" * 80)
+
+
 async def fetch_and_validate_category(category: str) -> tuple:
     """
     Fetch and validate articles for a single category
@@ -342,7 +364,7 @@ async def cleanup_old_news():
                 # -------------------------------------------------------------
                 # 1. SMART CHECK: "Hey collection, do you have old data?"
                 # -------------------------------------------------------------
-                check_response = appwrite_db.tablesDB.list_rows(
+                check_response = await appwrite_db.tablesDB.list_rows(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=collection_id,
                     queries=[
@@ -364,7 +386,7 @@ async def cleanup_old_news():
                 
                 while True:
                     # Query old articles (Batch of 500)
-                    response = appwrite_db.tablesDB.list_rows(
+                    response = await appwrite_db.tablesDB.list_rows(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=collection_id,
                         queries=[
@@ -386,7 +408,7 @@ async def cleanup_old_news():
                         try:
                             # This deletes the FULL DOCUMENT (Row) including all attributes
                             # (published_at, url, image, likes, views, dislikes, etc.)
-                            appwrite_db.tablesDB.delete_row(
+                            await appwrite_db.tablesDB.delete_row(
                                 database_id=settings.APPWRITE_DATABASE_ID,
                                 collection_id=collection_id,
                                 document_id=doc['$id']
@@ -520,6 +542,17 @@ def start_scheduler():
     )
     logger.info("")
     logger.info(f"✅ Job #{job_counter} Registered: 📊 Monthly Newsletter")
+    
+    # Research Papers Job (Daily at 02:00 IST)
+    scheduler.add_job(
+        fetch_daily_research,
+        trigger=CronTrigger(hour=2, minute=0, timezone=IST),
+        id='fetch_research_papers',
+        name='Research Fetcher (Daily 02:00 IST)',
+        replace_existing=True
+    )
+    logger.info("")
+    logger.info(f"✅ Job #{job_counter + 1} Registered: 🔬 Research Fetcher")
     
     # Start the scheduler
     logger.info("")

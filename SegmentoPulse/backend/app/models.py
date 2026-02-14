@@ -8,8 +8,9 @@ class Article(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     title: str
+    id: Optional[str] = Field(None, alias="$id") # Appwrite ID
     description: Optional[str] = ""
-    url: HttpUrl
+    url: Optional[str] = None # Relaxed validation for compatibility
     # Direct mapping to DB fields (snake_case)
     image_url: Optional[str] = ""
     published_at: datetime

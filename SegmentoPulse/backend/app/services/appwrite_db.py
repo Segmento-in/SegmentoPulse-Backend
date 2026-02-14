@@ -90,21 +90,21 @@ class AppwriteDatabase:
                 def __init__(self, db_service):
                     self.db = db_service
                 
-                def create_row(self, *args, **kwargs):
-                    return self.db.create_document(*args, **kwargs)
+                async def create_row(self, *args, **kwargs):
+                    return await asyncio.to_thread(self.db.create_document, *args, **kwargs)
                     
-                def get_row(self, *args, **kwargs):
-                    return self.db.get_document(*args, **kwargs)
+                async def get_row(self, *args, **kwargs):
+                    return await asyncio.to_thread(self.db.get_document, *args, **kwargs)
                 
-                def list_rows(self, *args, **kwargs):
-                    return self.db.list_documents(*args, **kwargs)
+                async def list_rows(self, *args, **kwargs):
+                    return await asyncio.to_thread(self.db.list_documents, *args, **kwargs)
 
-                def delete_row(self, *args, **kwargs):
+                async def delete_row(self, *args, **kwargs):
                      # Mapping delete_document -> delete_row if needed
-                    return self.db.delete_document(*args, **kwargs)
+                    return await asyncio.to_thread(self.db.delete_document, *args, **kwargs)
 
-                def update_row(self, *args, **kwargs):
-                    return self.db.update_document(*args, **kwargs)
+                async def update_row(self, *args, **kwargs):
+                    return await asyncio.to_thread(self.db.update_document, *args, **kwargs)
             
             self.tablesDB = TablesDBWrapper(self.databases)
             
@@ -140,7 +140,11 @@ class AppwriteDatabase:
         if cat.startswith('cloud-'):
             return settings.APPWRITE_CLOUD_COLLECTION_ID
             
-        # 3. Data Vertical (Security, Governance, etc.)
+        # 3. Research Vertical (New)
+        if cat == 'research' or cat.startswith('research-'):
+            return settings.APPWRITE_RESEARCH_COLLECTION_ID
+            
+        # 4. Data Vertical (Security, Governance, etc.)
         if cat.startswith('data-') or cat.startswith('business-') or cat == 'customer-data-platform':
             return settings.APPWRITE_DATA_COLLECTION_ID
             
@@ -193,29 +197,48 @@ class AppwriteDatabase:
                 'published_at',
                 'source',
                 'category',
-                'url_hash'
+                'url_hash',
+                'authors',   # Research specific
+                'pdf_url',   # Research specific
+                'summary'    # Research specific (mapped to description)
             ]
             
             # Query with projection
-            response = self.tablesDB.list_rows(
+            queries = [
+                Query.order_desc('published_at'),  # Uses index!
+                Query.limit(limit),
+                Query.offset(offset)
+            ]
+            
+            # Apply category filter ONLY if it's not the root 'research' category
+            # (Because 'research' collection only contains research papers, so no filter = All Research)
+            if category != 'research':
+                queries.insert(0, Query.equal('category', category))
+            
+            response = await self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=target_collection_id,
-                queries=[
-                    Query.equal('category', category),
-                    Query.order_desc('published_at'),  # Uses index!
-                    Query.limit(limit),
-                    Query.offset(offset)
-                ]
+                queries=queries
             )
             
             # Convert Appwrite documents to Article dictionaries
             articles = []
             for doc in response['documents']:
                 try:
+                    # Smart Mapping for Research Papers
+                    description = doc.get('description', '')
+                    if not description and doc.get('summary'):
+                         description = doc.get('summary')
+                         
+                    url = doc.get('url', '')
+                    if not url and doc.get('pdf_url'):
+                        url = doc.get('pdf_url')
+                        
                     article = {
+                        '$id': doc.get('$id'), # Ensure $id is passed!
                         'title': doc.get('title'),
-                        'description': doc.get('description', ''),
-                        'url': doc.get('url'),
+                        'description': description,
+                        'url': url,
                         'image_url': doc.get('image_url', ''),
                         'publishedAt': doc.get('published_at'),
                         'published_at': doc.get('published_at'), # Standard schema field
@@ -223,7 +246,9 @@ class AppwriteDatabase:
                         'category': doc.get('category'),
                         'likes': doc.get('likes', 0),
                         'dislikes': doc.get('dislike', 0),
-                        'views': doc.get('views', 0)
+                        'views': doc.get('views', 0),
+                        'author': doc.get('authors') # Map authors to author (singular for compat)
+                        # 'authors': doc.get('authors') # Keep plural if needed
                     }
                     articles.append(article)
                 except Exception as e:
@@ -280,7 +305,7 @@ class AppwriteDatabase:
 
             logger.info(f"🚀 [QUERY] Executing query on Collection: {target_collection_id}")
             
-            response = self.tablesDB.list_rows(
+            response = await self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=target_collection_id,
                 queries=queries
@@ -419,7 +444,7 @@ class AppwriteDatabase:
                     # Only the 'image' field uses legacy naming
 
                 # Try to create document
-                self.tablesDB.create_row(
+                await self.tablesDB.create_row(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=target_collection_id,
                     document_id=doc_id, # Truncated ID
@@ -488,7 +513,7 @@ class AppwriteDatabase:
             cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
             
             # Query old articles
-            response = self.tablesDB.list_rows(
+            response = await self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[
@@ -500,7 +525,7 @@ class AppwriteDatabase:
             deleted_count = 0
             for doc in response['documents']:
                 try:
-                    self.tablesDB.delete_row(
+                    await self.tablesDB.delete_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
                         collection_id=settings.APPWRITE_COLLECTION_ID,
                         document_id=doc['$id']
@@ -553,7 +578,7 @@ class AppwriteDatabase:
             # Using MD5 of email ensures idempotent writes (same email = same ID)
             doc_id = hashlib.md5(email.lower().encode()).hexdigest()
 
-            self.tablesDB.create_row(
+            await self.tablesDB.create_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 document_id=doc_id,
@@ -581,7 +606,7 @@ class AppwriteDatabase:
             return None
             
         try:
-            documents = self.tablesDB.list_rows(
+            documents = await self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 queries=[Query.equal("email", email)]
@@ -617,7 +642,7 @@ class AppwriteDatabase:
             if "Monthly" in preferences: data["sub_monthly"] = preferences["Monthly"]
             
             # Note: tablesDB wrapper now has update_row
-            self.tablesDB.update_row(
+            await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 document_id=doc_id,
@@ -633,7 +658,7 @@ class AppwriteDatabase:
     async def get_subscriber_by_token(self, token: str) -> Optional[Dict]:
         """Get subscriber by unsubscribe token"""
         try:
-            documents = self.tablesDB.list_rows(
+            documents = await self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 queries=[Query.equal("token", token)]
@@ -653,7 +678,7 @@ class AppwriteDatabase:
             return False
             
         try:
-            self.tablesDB.update_row(
+            await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
                 document_id=document_id,
@@ -692,7 +717,7 @@ class AppwriteDatabase:
                 
             data = {field: is_active}
             
-            self.tablesDB.update_row(
+            await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 document_id=subscriber['$id'],
@@ -719,7 +744,7 @@ class AppwriteDatabase:
             
             data = {"isActive": subscribed}
             
-            self.tablesDB.update_row(
+            await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 document_id=subscriber['$id'],
@@ -750,7 +775,7 @@ class AppwriteDatabase:
             # Store in UTC ISO format
             utc_now = datetime.now(pytz.UTC).isoformat()
             
-            self.tablesDB.update_row(
+            await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 document_id=subscriber['$id'],
@@ -794,7 +819,7 @@ class AppwriteDatabase:
             # 1. Must be globally active (isActive=true)
             # 2. Must be subscribed to specific preference (sub_X=true)
             
-            documents = self.tablesDB.list_rows(
+            documents = await self.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 queries=[

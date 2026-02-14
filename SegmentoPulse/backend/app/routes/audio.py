@@ -57,7 +57,7 @@ async def _find_article(appwrite, article_id: str, category: Optional[str] = Non
     # Try to find article in target collections
     for collection_id in target_collection_ids:
         try:
-            article = appwrite.tablesDB.get_row(
+            article = await appwrite.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
                 document_id=article_id
@@ -154,7 +154,7 @@ async def generate_audio_summary(request: AudioGenerationRequest):
                 "url_hash": url_hash  # Store full hash
             }
             
-            appwrite.tablesDB.create_row(
+            await appwrite.tablesDB.create_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=target_collection_id,
                 document_id=article_id,
@@ -162,7 +162,7 @@ async def generate_audio_summary(request: AudioGenerationRequest):
             )
             
             # Fetch it back
-            article = appwrite.tablesDB.get_row(
+            article = await appwrite.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=target_collection_id,
                 document_id=article_id
@@ -170,6 +170,7 @@ async def generate_audio_summary(request: AudioGenerationRequest):
             found_collection_id = target_collection_id
             print(f"✅ Created article in collection: {target_collection_id}")
 
+        
         # 2. Check if audio already exists
         if article.get('audio_url'):
             return AudioResponse(
@@ -179,8 +180,10 @@ async def generate_audio_summary(request: AudioGenerationRequest):
                 message="Audio already exists"
             )
             
+        from app.services.browser_manager import browser_manager
+
         # 3. Prepare text for summary
-        # FETCH FULL CONTENT using Trafilatura
+        # FETCH FULL CONTENT using Playwright (via BrowserManager) for SPA support
         import trafilatura
         
         # Determine URL to scrape
@@ -188,9 +191,20 @@ async def generate_audio_summary(request: AudioGenerationRequest):
         
         # Scrape
         print(f"Scraping content from: {target_view_url}")
-        downloaded = trafilatura.fetch_url(target_view_url)
-        extracted_text = trafilatura.extract(downloaded) if downloaded else None
         
+        # Use simple try-except loop for robustness, though BrowserManager handles most errors
+        extracted_text = None
+        try:
+            # 1. Fetch raw HTML using Headless Browser
+            raw_html = await browser_manager.get_content(target_view_url)
+            
+            # 2. Extract text from HTML
+            if raw_html:
+                extracted_text = trafilatura.extract(raw_html, include_comments=False)
+                
+        except Exception as e:
+            print(f"Scraping error: {e}")
+
         # Fallback to description if scraping fails
         if not extracted_text or len(extracted_text) < 100:
             print("Scraping failed or content too short, falling back to description")

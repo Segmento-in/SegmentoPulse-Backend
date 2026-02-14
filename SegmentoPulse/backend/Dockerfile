@@ -1,9 +1,10 @@
-FROM python:3.11-slim
+FROM mcr.microsoft.com/playwright/python:v1.41.0-jammy
 
 # Set working directory
 WORKDIR /app
 
 # Install system dependencies
+# Playwright image already has browsers, but might need basic build tools for some python packages
 RUN apt-get update && apt-get install -y \
     gcc \
     build-essential \
@@ -14,7 +15,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install Python dependencies
+# Use --no-cache-dir to keep image small
 RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install chromium
 
 # Copy application code
 COPY app ./app
