@@ -114,3 +114,4 @@ uvicorn
 wrapt
 xxhash
 yarl
+playwright
