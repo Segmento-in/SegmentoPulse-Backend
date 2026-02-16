@@ -277,12 +277,7 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
             
         new_dislikes = current_dislikes + 1
         
-        # Schema Compat: Research uses 'dislikes' (plural), others use 'dislike' (singular)
-        update_data = {}
-        if target_collection_id == settings.APPWRITE_RESEARCH_COLLECTION_ID:
-            update_data = {"dislikes": new_dislikes}
-        else:
-            update_data = {"dislike": new_dislikes}
+        update_data = {"dislike": new_dislikes}
 
         updated_doc = await appwrite_db.tablesDB.update_row(
             database_id=settings.APPWRITE_DATABASE_ID,
@@ -292,7 +287,8 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
         )
         
         # Return result (normalize key)
-        final_dislikes = updated_doc.get('dislikes') if 'dislikes' in updated_doc else updated_doc.get('dislike')
+        # Return result
+        final_dislikes = updated_doc.get('dislike') or updated_doc.get('dislikes', 0)
         
         logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {updated_doc['dislike']})")
         

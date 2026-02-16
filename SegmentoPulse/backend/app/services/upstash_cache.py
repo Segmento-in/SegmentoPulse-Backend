@@ -49,6 +49,14 @@ class UpstashCache:
             default_ttl: Default TTL in seconds
         """
         self.rest_url = rest_url.rstrip('/')
+        if self.rest_url and not self.rest_url.startswith("http"):
+             self.rest_url = f"https://{self.rest_url}"
+             
+        # Auto-disable if URL is missing
+        if not self.rest_url:
+            enabled = False
+            logger.warning("⚠️  Upstash URL missing. Disabling cache.")
+            
         self.rest_token = rest_token
         self.enabled = enabled
         self.default_ttl = default_ttl

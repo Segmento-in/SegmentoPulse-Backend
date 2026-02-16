@@ -81,9 +81,9 @@ class CacheService:
             # Upstash (Sync/REST)
             if self.mode == "upstash":
                 # UpstashClient is synchronous (httpx)
-                # UpstashCache already deserializes JSON. 
-                # If data is found, it's a list of dicts.
-                data = self.upstash.get(key)
+                # Offload to thread to prevent blocking event loop
+                import asyncio
+                data = await asyncio.to_thread(self.upstash.get, key)
                 if data:
                     # Convert dicts back to Pydantic models
                     try:
@@ -130,7 +130,8 @@ class CacheService:
             
             # Upstash
             if self.mode == "upstash":
-                return self.upstash.set(key, serialized_data, ttl=cache_ttl)
+                import asyncio
+                return await asyncio.to_thread(self.upstash.set, key, serialized_data, ttl=cache_ttl)
                 
             # Local Redis
             elif self.mode == "redis":
@@ -158,7 +159,8 @@ class CacheService:
             
         try:
             if self.mode == "upstash":
-                return self.upstash.delete(key)
+                import asyncio
+                return await asyncio.to_thread(self.upstash.delete, key)
             elif self.mode == "redis":
                 if not self.redis_client:
                     await self.connect()

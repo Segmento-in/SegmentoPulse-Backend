@@ -81,10 +81,13 @@ class OptimizedRetrieval:
         
         # Update all cache layers
         _memory_cache[cache_key] = (articles, datetime.now())
-        try:
-            await self.cache.set(cache_key, articles, ttl=300)  # 5 min Redis TTL
-        except Exception as e:
-            logger.debug(f"L1 cache write failed: {e}")
+        
+        # Only cache in Redis if we actually got results (prevent poisoning with empty lists on error)
+        if articles:
+            try:
+                await self.cache.set(cache_key, articles, ttl=300)  # 5 min Redis TTL
+            except Exception as e:
+                logger.debug(f"L1 cache write failed: {e}")
         
         return articles
     
@@ -102,8 +105,7 @@ class OptimizedRetrieval:
         collection_id = self._get_collection_for_category(category)
         
         try:
-            response = await asyncio.to_thread(
-                self.appwrite_db.databases.list_documents,
+            response = await self.appwrite_db.tablesDB.list_rows(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
                 queries=[
@@ -155,8 +157,7 @@ class OptimizedRetrieval:
         
         # Fetch from Appwrite
         try:
-            doc = await asyncio.to_thread(
-                self.appwrite_db.databases.get_document,
+            doc = await self.appwrite_db.tablesDB.get_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 document_id=article_id
@@ -174,8 +175,7 @@ class OptimizedRetrieval:
             logger.error(f"❌ Error fetching article {article_id}: {e}")
             # Try cloud collection as fallback
             try:
-                doc = await asyncio.to_thread(
-                    self.appwrite_db.databases.get_document,
+                doc = await self.appwrite_db.tablesDB.get_row(
                     database_id=settings.APPWRITE_DATABASE_ID,
                     collection_id=settings.APPWRITE_CLOUD_COLLECTION_ID,
                     document_id=article_id

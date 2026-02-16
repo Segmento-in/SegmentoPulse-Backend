@@ -35,6 +35,31 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class TablesDBWrapper:
+    """
+    Future-Proofing Wrapper (Migration Phase)
+    Wraps legacy 'documents' API into new 'tables' nomenclature
+    """
+    def __init__(self, db_service):
+        self.db = db_service
+    
+    async def create_row(self, *args, **kwargs):
+        return await asyncio.to_thread(self.db.create_document, *args, **kwargs)
+        
+    async def get_row(self, *args, **kwargs):
+        return await asyncio.to_thread(self.db.get_document, *args, **kwargs)
+    
+    async def list_rows(self, *args, **kwargs):
+        return await asyncio.to_thread(self.db.list_documents, *args, **kwargs)
+
+    async def delete_row(self, *args, **kwargs):
+            # Mapping delete_document -> delete_row if needed
+        return await asyncio.to_thread(self.db.delete_document, *args, **kwargs)
+
+    async def update_row(self, *args, **kwargs):
+        return await asyncio.to_thread(self.db.update_document, *args, **kwargs)
+
+
 class AppwriteDatabase:
     """Appwrite Database service for persistent article storage (L2 cache)"""
     
@@ -83,28 +108,6 @@ class AppwriteDatabase:
             print("-" * 80)
             print("")
             print("")
-            
-            # Future-Proofing Wrapper (Migration Phase)
-            # Wraps legacy 'documents' API into new 'tables' nomenclature
-            class TablesDBWrapper:
-                def __init__(self, db_service):
-                    self.db = db_service
-                
-                async def create_row(self, *args, **kwargs):
-                    return await asyncio.to_thread(self.db.create_document, *args, **kwargs)
-                    
-                async def get_row(self, *args, **kwargs):
-                    return await asyncio.to_thread(self.db.get_document, *args, **kwargs)
-                
-                async def list_rows(self, *args, **kwargs):
-                    return await asyncio.to_thread(self.db.list_documents, *args, **kwargs)
-
-                async def delete_row(self, *args, **kwargs):
-                     # Mapping delete_document -> delete_row if needed
-                    return await asyncio.to_thread(self.db.delete_document, *args, **kwargs)
-
-                async def update_row(self, *args, **kwargs):
-                    return await asyncio.to_thread(self.db.update_document, *args, **kwargs)
             
             self.tablesDB = TablesDBWrapper(self.databases)
             
@@ -221,6 +224,8 @@ class AppwriteDatabase:
                 queries=queries
             )
             
+            print(f"[DEBUG] Appwrite Raw Response: Total={response.get('total')}, Docs={len(response.get('documents', []))}")
+            
             # Convert Appwrite documents to Article dictionaries
             articles = []
             for doc in response['documents']:
@@ -318,7 +323,7 @@ class AppwriteDatabase:
                     article = {
                         '$id': doc.get('$id'),
                         'title': doc.get('title'),
-                        'description': doc.get('description', ''),
+                        'description': doc.get('description') or doc.get('summary', ''),
                         'url': doc.get('url'),
                         'image_url': doc.get('image_url', ''),
                         'publishedAt': doc.get('published_at'),

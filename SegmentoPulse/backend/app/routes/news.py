@@ -84,11 +84,14 @@ async def get_news_by_category(
                 raise HTTPException(status_code=400, detail="Offset limit reached (5000). Use cursor pagination.")
                 
             queries = [
-                Query.equal('category', category),
                 Query.order_desc('published_at'),
                 Query.limit(limit),
                 Query.offset(offset)
             ]
+            
+            # Apply category filter logic (same as CursorPagination)
+            if category != 'research':
+                queries.insert(0, Query.equal('category', category))
         else:
             # Default: Cursor Pagination (Preferred)
             # Pass category to build_query_filters so it adds Query.equal('category', ...)
