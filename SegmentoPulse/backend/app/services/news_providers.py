@@ -1,6 +1,6 @@
 import httpx
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from abc import ABC, abstractmethod
 from app.models import Article
 import os
@@ -86,12 +86,22 @@ class GNewsProvider(NewsProvider):
         try:
             query = self.category_map.get(category, category)
             url = f"{self.base_url}/search"
+
+            # Build a window from midnight UTC today to right now.
+            # This is a strict CALENDAR DAY filter, not a rolling 24-hour window.
+            # A job running at 11:59 PM will still only fetch today's articles,
+            # not anything from yesterday.
+            _now    = datetime.now(timezone.utc)
+            _cutoff = _now.replace(hour=0, minute=0, second=0, microsecond=0)  # 00:00:00 UTC today
+
             params = {
                 'q': query,
                 'lang': 'en',
                 'country': 'us',
                 'max': min(limit, 10),  # GNews free tier max 10
-                'apikey': self.api_key
+                'apikey': self.api_key,
+                'from': _cutoff.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'to':   _now.strftime('%Y-%m-%dT%H:%M:%SZ'),
             }
             
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -184,12 +194,18 @@ class NewsAPIProvider(NewsProvider):
         try:
             query = self.category_keywords.get(category, category)
             url = f"{self.base_url}/everything"
+
+            # Ask NewsAPI for articles published since midnight UTC today.
+            # Calendar day window: resets cleanly at 00:00:00 UTC every day.
+            _cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
             params = {
                 'q': query,
                 'language': 'en',
                 'sortBy': 'publishedAt',
                 'pageSize': min(limit, 20),
-                'apiKey': self.api_key
+                'apiKey': self.api_key,
+                'from': _cutoff.strftime('%Y-%m-%dT%H:%M:%SZ'),
             }
             
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -273,11 +289,16 @@ class NewsDataProvider(NewsProvider):
         try:
             query = self.category_keywords.get(category, category)
             url = f"{self.base_url}/news"
+
+            # NewsData has a built-in 'timeframe' parameter (in hours).
+            # Setting it to 24 tells their server: "only send today's articles".
+            # This is the cleanest approach — no date maths needed on our side.
             params = {
                 'q': query,
                 'language': 'en',
                 'country': 'us',
-                'apikey': self.api_key
+                'apikey': self.api_key,
+                'timeframe': 24,
             }
             
             async with httpx.AsyncClient(timeout=10.0) as client:
