@@ -8,9 +8,10 @@ EMERGENCY HOTFIX (2026-01-23): Fixed AttributeError 'Article' object has no attr
 """
 
 from typing import Dict, Optional, List, Union
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import re
 from urllib.parse import urlparse
+from dateutil import parser as dateutil_parser
 
 
 def is_valid_article(article: Union[Dict, 'Article']) -> bool:
@@ -64,10 +65,49 @@ def is_valid_article(article: Union[Dict, 'Article']) -> bool:
     except Exception:
         return False
     
-    # Required: Published date
-    if not (article_dict.get('publishedAt') or article_dict.get('published_at')):
+    # Required: Published date must exist.
+    raw_date = article_dict.get('publishedAt') or article_dict.get('published_at')
+    if not raw_date:
         return False
-    
+
+    # ── FRESHNESS GATE ────────────────────────────────────────────────────────
+    # We only want articles published within the last 24 hours.
+    #
+    # CRITICAL ORDER: This check runs on the RAW date string, before
+    # normalize_article_date() gets a chance to run. That function has a
+    # silent fallback: if a date is unparseable it stamps the article with
+    # 'right now'. Without this guard, a 3-day-old article with a broken
+    # date string would survive normalization and appear fresh.
+    #
+    # Here we do the opposite: if we cannot confidently parse the date,
+    # we reject the article. No date = no entry.
+    try:
+        if isinstance(raw_date, datetime):
+            pub_dt = raw_date
+        else:
+            pub_dt = dateutil_parser.parse(str(raw_date))
+
+        # Make timezone-aware if the provider gave us a naive datetime.
+        if pub_dt.tzinfo is None:
+            pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+
+        # Midnight UTC today — strict calendar day, not a rolling 24h window.
+        # Example: at 11:59 PM, this is still 00:00:00 of the current day,
+        # so only today's articles pass. Yesterday's articles are rejected
+        # regardless of what time the job fires.
+        cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if pub_dt < cutoff:
+            # Article is older than 24 hours — reject it here before any
+            # keyword matching or Redis dedup call wastes time on it.
+            return False
+
+    except Exception:
+        # If we genuinely cannot parse the date, we reject the article.
+        # Better to miss one article than to save a zombie with a fake date.
+        return False
+    # ──────────────────────────────────────────────────────────────────────────
+
     # Optional but validate if present: Image URL
     # Handle both 'image' (raw API) and 'image_url' (Pydantic/DB)
     image_url = article_dict.get('image') or article_dict.get('image_url')
@@ -77,7 +117,7 @@ def is_valid_article(article: Union[Dict, 'Article']) -> bool:
             # Invalid image URL - remove both keys to be safe
             if 'image' in article_dict: article_dict['image'] = None
             if 'image_url' in article_dict: article_dict['image_url'] = None
-    
+
     return True
 
 
