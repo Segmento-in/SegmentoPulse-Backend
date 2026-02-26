@@ -1,6 +1,7 @@
 import httpx
 from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo   # stdlib from Python 3.9+ — no extra install needed
 from abc import ABC, abstractmethod
 from app.models import Article
 import os
@@ -87,12 +88,21 @@ class GNewsProvider(NewsProvider):
             query = self.category_map.get(category, category)
             url = f"{self.base_url}/search"
 
-            # Build a window from midnight UTC today to right now.
-            # This is a strict CALENDAR DAY filter, not a rolling 24-hour window.
-            # A job running at 11:59 PM will still only fetch today's articles,
-            # not anything from yesterday.
-            _now    = datetime.now(timezone.utc)
-            _cutoff = _now.replace(hour=0, minute=0, second=0, microsecond=0)  # 00:00:00 UTC today
+            # Build a window from midnight IST today (converted to UTC) to right now.
+            #
+            # Why IST midnight and not UTC midnight?
+            # IST is UTC+5:30. If we used UTC midnight as the "from" date, GNews
+            # would skip articles published in India between 12:00 AM IST and
+            # 5:30 AM IST — the first 5.5 hours of the Indian day.
+            # By computing IST midnight and converting it to UTC, we tell GNews:
+            # "Give me everything published since the Indian day started".
+            _ist_zone   = ZoneInfo("Asia/Kolkata")
+            _now_ist    = datetime.now(_ist_zone)
+            _cutoff_ist = _now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Convert IST midnight → UTC so the API gets a valid UTC timestamp.
+            _cutoff_utc = _cutoff_ist.astimezone(timezone.utc)
+            # Current moment in UTC for the "to" bound.
+            _now_utc    = datetime.now(timezone.utc)
 
             params = {
                 'q': query,
@@ -100,8 +110,8 @@ class GNewsProvider(NewsProvider):
                 'country': 'us',
                 'max': min(limit, 10),  # GNews free tier max 10
                 'apikey': self.api_key,
-                'from': _cutoff.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                'to':   _now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'from': _cutoff_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),  # IST midnight in UTC
+                'to':   _now_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
             }
             
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -195,9 +205,14 @@ class NewsAPIProvider(NewsProvider):
             query = self.category_keywords.get(category, category)
             url = f"{self.base_url}/everything"
 
-            # Ask NewsAPI for articles published since midnight UTC today.
-            # Calendar day window: resets cleanly at 00:00:00 UTC every day.
-            _cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            # Ask NewsAPI for articles published since midnight IST today.
+            # We compute IST midnight and convert it to UTC before sending it
+            # to the API, because NewsAPI expects UTC timestamps.
+            # This gives Indian users full coverage from their midnight onwards.
+            _ist_zone   = ZoneInfo("Asia/Kolkata")
+            _now_ist    = datetime.now(_ist_zone)
+            _cutoff_ist = _now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+            _cutoff_utc = _cutoff_ist.astimezone(timezone.utc)  # Convert to UTC for the API
 
             params = {
                 'q': query,
@@ -205,7 +220,7 @@ class NewsAPIProvider(NewsProvider):
                 'sortBy': 'publishedAt',
                 'pageSize': min(limit, 20),
                 'apiKey': self.api_key,
-                'from': _cutoff.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'from': _cutoff_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),  # IST midnight in UTC
             }
             
             async with httpx.AsyncClient(timeout=10.0) as client:
