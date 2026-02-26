@@ -59,7 +59,7 @@ async def get_news_by_category(
         
         # Try Upstash cache first (5 min TTL)
         if upstash_cache.enabled:
-            cached_data = upstash_cache.get(cache_key)
+            cached_data = await upstash_cache.get(cache_key)
             if cached_data:
                 return NewsResponse(
                     success=True,
@@ -134,7 +134,7 @@ async def get_news_by_category(
         
         # Cache the result (5 min TTL)
         if upstash_cache.enabled:
-            upstash_cache.set(
+            await upstash_cache.set(
                 cache_key,
                 {"articles": articles, "has_more": has_more, "next_cursor": next_cursor},
                 ttl=300  # 5 minutes
@@ -160,7 +160,7 @@ async def get_rss_feed(provider: str):
         # Check Upstash cache
         cache_key = f"rss:{provider}"
         if upstash_cache.enabled:
-            cached_data = upstash_cache.get(cache_key)
+            cached_data = await upstash_cache.get(cache_key)
             if cached_data:
                 return NewsResponse(
                     success=True,
@@ -176,7 +176,7 @@ async def get_rss_feed(provider: str):
         
         # Cache in Upstash (10 min TTL for RSS feeds)
         if upstash_cache.enabled:
-            upstash_cache.set(cache_key, articles, ttl=600)
+            await upstash_cache.set(cache_key, articles, ttl=600)
         
         return NewsResponse(
             success=True,

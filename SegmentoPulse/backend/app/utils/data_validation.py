@@ -238,6 +238,8 @@ def is_relevant_to_category(article: Union[Dict, 'Article'], category: str) -> b
         article_dict = article
     
     # Category keyword dictionaries
+    # Each category has a list of words we scan for in the article's title,
+    # description, AND URL path. If at least one word matches, the article passes.
     CATEGORY_KEYWORDS = {
         'ai': [
             'ai', 'artificial intelligence', 'machine learning', 'deep learning',
@@ -260,6 +262,11 @@ def is_relevant_to_category(article: Union[Dict, 'Article'], category: str) -> b
             'data engineering', 'pipeline', 'etl', 'big data', 'spark',
             'hadoop', 'kafka', 'airflow', 'data warehouse', 'snowflake'
         ],
+        'data-management': [
+            'data management', 'master data', 'mdm', 'data catalog',
+            'data quality', 'data lineage', 'data stewardship',
+            'data governance', 'data integration', 'reference data'
+        ],
         'business-intelligence': [
             'business intelligence', 'bi', 'analytics', 'dashboard',
             'tableau', 'power bi', 'looker', 'reporting', 'kpi'
@@ -281,6 +288,40 @@ def is_relevant_to_category(article: Union[Dict, 'Article'], category: str) -> b
             'alibaba cloud', 'tencent cloud', 'huawei cloud', 'cloudflare',
             'saas', 'paas', 'iaas', 'serverless', 'kubernetes'
         ],
+        # ── Cloud sub-categories (each maps to a specific provider) ──────────
+        'cloud-aws': [
+            'aws', 'amazon web services', 's3', 'ec2', 'lambda',
+            'cloudfront', 'sagemaker', 'dynamodb', 'amazon'
+        ],
+        'cloud-azure': [
+            'azure', 'microsoft azure', 'azure devops', 'azure ml',
+            'azure openai', 'microsoft cloud'
+        ],
+        'cloud-gcp': [
+            'gcp', 'google cloud', 'bigquery', 'vertex ai',
+            'cloud run', 'dataflow', 'google cloud platform'
+        ],
+        'cloud-oracle': [
+            'oracle cloud', 'oci', 'oracle database', 'oracle fusion',
+            'oracle cloud infrastructure'
+        ],
+        'cloud-ibm': [
+            'ibm cloud', 'ibm watson', 'red hat', 'openshift', 'ibm z'
+        ],
+        'cloud-alibaba': [
+            'alibaba cloud', 'aliyun', 'alicloud'
+        ],
+        'cloud-digitalocean': [
+            'digitalocean', 'droplet', 'app platform'
+        ],
+        'cloud-huawei': [
+            'huawei cloud', 'huaweicloud'
+        ],
+        'cloud-cloudflare': [
+            'cloudflare', 'cloudflare workers', 'cloudflare r2',
+            'cloudflare pages', 'zero trust'
+        ],
+        # ── Content / publishing categories ───────────────────────────────────
         'medium-article': [
             'medium', 'article', 'blog', 'writing', 'publishing',
             'content', 'story', 'author', 'blogging'
@@ -298,11 +339,27 @@ def is_relevant_to_category(article: Union[Dict, 'Article'], category: str) -> b
         # Unknown category - allow (don't reject)
         return True
     
-    # Combine title and description for checking
-    # FIX: Use (value or '') pattern to handle explicit None values from messy RSS feeds
+    # Build the text we will search for keywords.
+    # We use title + description as the primary source.
+    # We also append the article's URL path because RSS feeds (especially Google News)
+    # often return empty descriptions. The URL itself usually tells you what the
+    # article is about — e.g. "/aws-launches-new-s3-feature" clearly contains 'aws' and 's3'.
+    # Hyphens and slashes are replaced with spaces so words can be matched individually.
     title = (article_dict.get('title') or '').lower()
     description = (article_dict.get('description') or '').lower()
-    text = f"{title} {description}"
+
+    # Extract the URL path safely.
+    raw_url = article_dict.get('url') or ''
+    url_str = str(raw_url).lower()
+    try:
+        parsed_url = urlparse(url_str)
+        # Replace hyphens and slashes with spaces so
+        # "/aws-new-s3-launch" becomes "aws new s3 launch".
+        url_words = parsed_url.path.replace('-', ' ').replace('/', ' ')
+    except Exception:
+        url_words = ''
+
+    text = f"{title} {description} {url_words}"
     
     # Count keyword matches
     matches = sum(1 for keyword in keywords if keyword.lower() in text)

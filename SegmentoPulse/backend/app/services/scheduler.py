@@ -51,6 +51,43 @@ CATEGORIES = [
     "cloud-cloudflare"
 ]
 
+# --------------------------------------------------------------------------
+# MODULE-LEVEL SINGLETONS (Phase 6)
+# --------------------------------------------------------------------------
+# These two objects are created ONCE when the server starts and are shared
+# by all 22 per-category jobs for the entire lifetime of the process.
+#
+# _shared_aggregator  — one NewsAggregator for all categories (Phase 1 fix).
+#   It holds provider state (quota counts, circuit-breaker) that must
+#   survive across job runs. Creating a new one for every job would reset
+#   all that carefully maintained state.
+#
+# _adaptive  — the AdaptiveScheduler that tracks how many articles each
+#   category produces and adjusts its fetch interval accordingly.
+#   Also persists to disk (data/velocity_tracking.json) so intervals
+#   survive server restarts.
+# --------------------------------------------------------------------------
+_shared_aggregator = None
+_adaptive          = None
+
+
+def _get_shared_aggregator():
+    """Return (creating if needed) the one shared NewsAggregator instance."""
+    global _shared_aggregator
+    if _shared_aggregator is None:
+        _shared_aggregator = NewsAggregator()
+        logger.info("[AGGREGATOR] Shared NewsAggregator created (singleton).")
+    return _shared_aggregator
+
+
+def _get_adaptive():
+    """Return (creating if needed) the one shared AdaptiveScheduler instance."""
+    global _adaptive
+    if _adaptive is None:
+        _adaptive = get_adaptive_scheduler(CATEGORIES)
+        logger.info("[ADAPTIVE] AdaptiveScheduler created for %d categories.", len(CATEGORIES))
+    return _adaptive
+
 
 async def fetch_all_news():
     """
@@ -78,10 +115,17 @@ async def fetch_all_news():
     total_irrelevant = 0
     category_stats = {}
     
-    # Parallel fetch all categories at once
+    # Parallel fetch all categories at once.
+    # We create ONE shared aggregator here so all 22 category tasks share
+    # the same provider state (quota counts, circuit states, etc.).
+    # Fix #3 (Phase 7): Use the permanent module-level singleton instead of
+    # creating a fresh instance here. This ensures that even manual triggers
+    # respect the live quota counts and circuit-breaker state from the
+    # adaptive jobs that may already be running.
+    shared_aggregator = _get_shared_aggregator()
     fetch_tasks = []
     for category in CATEGORIES:
-        task = fetch_and_validate_category(category)
+        task = fetch_and_validate_category(category, shared_aggregator)
         fetch_tasks.append(task)
     
     # Execute all fetches concurrently with error isolation
@@ -99,7 +143,9 @@ async def fetch_all_news():
             total_errors += 1
             continue
         
-        category, articles, invalid_count, irrelevant_count = result
+        # Unpack 5-tuple — relevant_count (5th item) is not needed here,
+        # it is only used by fetch_single_category_job for adaptive velocity.
+        category, articles, invalid_count, irrelevant_count, _ = result
         
         if not articles:
             logger.warning("⚠️  No valid articles for category: %s", category)
@@ -195,20 +241,117 @@ async def fetch_all_news():
     )
     
     # Update adaptive scheduler intervals
-    from app.services.adaptive_scheduler import get_adaptive_scheduler
-    
-    adaptive = get_adaptive_scheduler(CATEGORIES)
+    # (kept for backward compat — manual trigger may still call this)
+    adaptive = _get_adaptive()
     if adaptive:
-        # Update intervals based on this run's statistics
-        for category, stats in category_stats.items():
+        for cat, stats in category_stats.items():
             if 'fetched' in stats:
-                new_interval = adaptive.update_category_velocity(
-                    category, 
-                    stats['fetched']
-                )
-        
-        # Print adaptive scheduler summary
+                adaptive.update_category_velocity(cat, stats['fetched'])
         adaptive.print_summary()
+
+
+async def fetch_single_category_job(category: str):
+    """
+    Per-category background job (Phase 6).
+
+    This is what each of the 22 adaptive jobs calls every N minutes.
+    It is a self-contained unit: fetch → validate → save → report → reschedule.
+
+    In plain English:
+      Think of this like a delivery driver who has a single route (one category).
+      After every delivery run, the dispatcher (adaptive scheduler) checks how
+      many packages were delivered. If the route is always busy (lots of news),
+      the driver gets sent out more often. If the route is quiet, the driver
+      waits longer before going out again.
+    """
+    aggregator = _get_shared_aggregator()
+    adaptive   = _get_adaptive()
+
+    logger.info("[ADAPTIVE JOB] Starting fetch for category: %s", category.upper())
+
+    try:
+        # Step 1: Fetch + validate (calls the full Phase 1-4 pipeline).
+        result = await fetch_and_validate_category(category, aggregator)
+
+        if isinstance(result, Exception):
+            logger.error("[ADAPTIVE JOB] %s fetch failed: %s", category, result)
+            return
+
+        # Unpack the 5-tuple returned by fetch_and_validate_category.
+        # relevant_count = articles that passed Steps 1+2 (valid + on-topic)
+        # but before Step 3 (Redis 48h dedup) filtered them.
+        # This is the true measure of how active a category's news feed is.
+        cat, articles, invalid_count, irrelevant_count, relevant_count = result
+
+        if not articles:
+            logger.info("[ADAPTIVE JOB] %s: No valid articles this run.", category.upper())
+            saved_count = 0
+        else:
+            # Step 2: Save to Appwrite.
+            appwrite_db   = get_appwrite_db()
+            cache_service = CacheService()
+
+            logger.info("[ADAPTIVE JOB] %s: Saving %d articles...", category.upper(), len(articles))
+            saved_count, duplicate_count, error_count, _ = await appwrite_db.save_articles(articles)
+
+            logger.info(
+                "[ADAPTIVE JOB] %s: %d saved, %d duplicates, %d errors, "
+                "%d invalid, %d irrelevant.",
+                category.upper(), saved_count, duplicate_count, error_count,
+                invalid_count, irrelevant_count
+            )
+
+            # Step 3: Update Redis article cache so the API serves fresh results.
+            try:
+                await cache_service.set(f"news:{category}", articles, ttl=settings.CACHE_TTL)
+            except Exception as cache_err:
+                logger.debug("[ADAPTIVE JOB] Redis cache update skipped: %s", cache_err)
+
+        # Step 4: Feed result count back to the adaptive scheduler.
+        # We use relevant_count (articles that passed validation + keyword relevance)
+        # rather than saved_count (articles actually new to Appwrite).
+        #
+        # Why? A busy category with a slow-updating RSS feed will have high
+        # relevant_count but low saved_count (we already have the articles).
+        # Using saved_count would incorrectly mark it as "quiet" and slow it down.
+        # relevant_count correctly reflects: "how much real news is out there?"
+        if adaptive:
+            # Fix #1 (Phase 7): Read old_interval NOW, before update_category_velocity
+            # overwrites data['interval'] inside the AdaptiveScheduler.
+            # The comparison new_interval != old_interval was always False before
+            # because we were reading the interval AFTER it was already updated.
+            old_interval = adaptive.get_interval(category)
+
+            # Now update velocity with the correct metric (in-memory only — instant).
+            new_interval = adaptive.update_category_velocity(category, relevant_count)
+
+            # Persist the updated velocity to Redis asynchronously.
+            # async_persist() uses httpx.AsyncClient so it never blocks the event loop.
+            # Think of it like dropping a letter in a post box — we do not stand
+            # and wait for the postman to deliver it. We just drop it and walk on.
+            await adaptive.async_persist()
+
+            # Step 5: If the interval genuinely changed, tell APScheduler
+            # to reschedule this specific job live — no server restart needed.
+            if new_interval != old_interval:
+                job_id = f"fetch_{category}"
+                try:
+                    scheduler.reschedule_job(
+                        job_id,
+                        trigger=IntervalTrigger(minutes=new_interval)
+                    )
+                    logger.info(
+                        "[ADAPTIVE] %s interval changed: %dmin → %dmin. Job rescheduled live.",
+                        category.upper(), old_interval, new_interval
+                    )
+                except Exception as reschedule_err:
+                    logger.warning(
+                        "[ADAPTIVE] Could not reschedule %s job: %s",
+                        job_id, reschedule_err
+                    )
+
+    except Exception as e:
+        logger.exception("[ADAPTIVE JOB] Unhandled error for category %s: %s", category, e)
 
 
 async def fetch_daily_research():
@@ -232,76 +375,115 @@ async def fetch_daily_research():
     logger.info("═" * 80)
 
 
-async def fetch_and_validate_category(category: str) -> tuple:
+async def fetch_and_validate_category(category: str, aggregator) -> tuple:
     """
-    Fetch and validate articles for a single category
-    
+    Fetch and validate articles for a single category.
+
+    Args:
+        category:   The news category (e.g. 'ai', 'cloud-aws').
+        aggregator: The shared NewsAggregator instance for this run.
+                    Using a shared instance means all 22 parallel tasks
+                    share the same quota counters and circuit-breaker state.
+
     Returns: (category, valid_articles, invalid_count, irrelevant_count)
     """
     from app.utils.data_validation import is_valid_article, sanitize_article, is_relevant_to_category
     from app.utils.date_parser import normalize_article_date
+    from app.utils.url_canonicalization import canonicalize_url
+    from app.utils.redis_dedup import is_url_seen_or_mark
     
     try:
         logger.info("📌 Fetching %s...", category.upper())
         
-        # Fetch from external APIs
-        news_aggregator = NewsAggregator()
-        
-        # Concurrent fetch from Main Chain + Medium + Official Cloud
-        main_task = news_aggregator.fetch_by_category(category)
-        medium_task = news_aggregator.fetch_from_provider('medium', category)
-        official_task = news_aggregator.fetch_from_provider('official_cloud', category)
-        
-        results = await asyncio.gather(main_task, medium_task, official_task, return_exceptions=True)
-        
-        # Combine results
-        raw_articles = []
-        
-        # Result 0: Main Provider Chain
-        if isinstance(results[0], list):
-            raw_articles.extend(results[0])
-        
-        # Result 1: Medium RSS
-        if isinstance(results[1], list):
-            if results[1]:
-                logger.info("   + Found %d Medium articles for %s", len(results[1]), category)
-                raw_articles.extend(results[1])
-
-        # Result 2: Official Cloud
-        if isinstance(results[2], list):
-            if results[2]:
-                logger.info("   + Found %d Official Cloud articles for %s", len(results[2]), category)
-                raw_articles.extend(results[2])
+        # Ask the aggregator for all articles from all sources for this category.
+        # fetch_by_category (Phase 5) internally runs:
+        #   1. Paid waterfall  — GNews → NewsAPI → NewsData (stops on first success)
+        #   2. Free parallel   — Google RSS + Medium + Official Cloud, all at once
+        #   3. Returns the merged list
+        # We no longer need to call fetch_from_provider for medium/official_cloud
+        # separately here. That would duplicate the work Phase 5 already does.
+        raw_articles = await aggregator.fetch_by_category(category)
         
         if not raw_articles:
             return (category, [], 0, 0)
+
+        # ------------------------------------------------------------------
+        # IN-BATCH DEDUPLICATION
+        # ------------------------------------------------------------------
+        # When 3 providers run at the same time for the same category, they
+        # sometimes return the exact same article (e.g. a TechCrunch AI story
+        # can come from both GNews AND Google RSS in the same fetch cycle).
+        # We catch and remove these same-batch duplicates RIGHT HERE, before
+        # the expensive validation loop even starts.
+        # This is like a quick ID-card check at the entrance before people
+        # join the full security screening queue.
+        _seen_in_batch: set = set()
+        _deduplicated_raw = []
+        for _art in raw_articles:
+            _raw_url = str(_art.url) if _art.url else ''
+            _canonical = canonicalize_url(_raw_url) if _raw_url else ''
+            # If we have a valid canonical URL and we've already seen it → skip
+            if _canonical and _canonical in _seen_in_batch:
+                continue
+            if _canonical:
+                _seen_in_batch.add(_canonical)
+            _deduplicated_raw.append(_art)
+
+        _batch_dupes_removed = len(raw_articles) - len(_deduplicated_raw)
+        if _batch_dupes_removed > 0:
+            logger.info(
+                "   🔄 [BATCH DEDUP] %s: Removed %d within-batch duplicates before validation",
+                category.upper(), _batch_dupes_removed
+            )
+        raw_articles = _deduplicated_raw
+        # ------------------------------------------------------------------
         
         # Validate, filter, and sanitize
         valid_articles = []
         invalid_count = 0
         irrelevant_count = 0
+        relevant_count = 0   # articles that are valid + relevant, before Redis dedup
         
         for article in raw_articles:
-            # Step 1: Basic validation
+            # Step 1: Basic validation — must have a title, URL, and publication date.
             if not is_valid_article(article):
                 invalid_count += 1
                 continue
-            
-            # Step 2: Category relevance check
+
+            # Step 2: Category relevance check — title+description must match category keywords.
             if not is_relevant_to_category(article, category):
                 irrelevant_count += 1
                 continue
-            
-            # Step 3: Normalize date to UTC ISO-8601
+
+            # Checkpoint: count articles that are valid AND relevant, but before
+            # the Redis 48-hour check strips out the ones we have already stored.
+            # This is the true "how much real news is in this category?" signal.
+            # The adaptive scheduler uses this number to decide fetch frequency.
+            # (Fix #2 - Phase 7: was using saved_count, which confused "quiet feed"
+            # with "feed we already have fully stored" — two very different things.)
+            relevant_count += 1
+
+            # Step 3: Redis 48-hour dedup check — THE MAIN BOUNCER.
+            # Check if we have already stored this exact article URL in the last 48 hours.
+            # If yes, skip silently — it's a repeat. If no, mark it as seen and continue.
+            # This stops the same article being saved every hour from a slow-updating RSS feed.
+            if await is_url_seen_or_mark(str(article.url) if article.url else ''):
+                logger.debug(
+                    "   [REDIS DEDUP] Skipped article already seen in last 48 hours: %s",
+                    str(article.url)[:80]
+                )
+                continue
+
+            # Step 4: Normalize date to UTC ISO-8601.
             article = normalize_article_date(article)
-            
-            # Step 4: Sanitize and clean
+
+            # Step 5: Sanitize and clean the article fields.
             clean_article = sanitize_article(article)
             valid_articles.append(clean_article)
         
-        logger.info("✓ %s: %d valid, %d invalid, %d irrelevant", 
+        logger.info("✓ %s: %d valid, %d invalid, %d irrelevant",
                     category.upper(), len(valid_articles), invalid_count, irrelevant_count)
-        return (category, valid_articles, invalid_count, irrelevant_count)
+        return (category, valid_articles, invalid_count, irrelevant_count, relevant_count)
         
     except asyncio.TimeoutError:
         logger.error("⏱️  Timeout fetching %s (>30s)", category)
@@ -473,18 +655,41 @@ def start_scheduler():
     logger.info("⏰ [SCHEDULER] Initializing background scheduler...")
     logger.info("═" * 80)
     
-    # News Fetcher Job (Frequency: Every 1 hour)
-    scheduler.add_job(
-        fetch_all_news,
-        trigger=IntervalTrigger(hours=1),
-        id='fetch_all_news',
-        name='News Fetcher (every 1 hour)',
-        replace_existing=True
-    )
+    # ── Job #1: PER-CATEGORY ADAPTIVE NEWS FETCHERS (Phase 6) ───────────
+    # Instead of one giant job that fetches all 22 categories every hour,
+    # we register 22 individual jobs, each on its own timer.
+    #
+    # The timer for each category is read from the adaptive scheduler,
+    # which remembers how "active" each category was in past runs:
+    #   - 'ai' category gets lots of articles → runs every 5 minutes
+    #   - 'cloud-alibaba' is quiet → runs every 60 minutes
+    #   - Most categories start at 15 minutes (the default)
+    #
+    # After every run, the job updates its own timer if the velocity changed.
+    # No server restart needed.
+    # -------------------------------------------------------------------------
+    adaptive = _get_adaptive()   # initializes singleton + loads saved intervals
+
+    for idx, category in enumerate(CATEGORIES, start=1):
+        initial_interval = adaptive.get_interval(category)  # minutes
+        job_id = f"fetch_{category}"
+
+        scheduler.add_job(
+            fetch_single_category_job,
+            trigger=IntervalTrigger(minutes=initial_interval),
+            args=[category],
+            id=job_id,
+            name=f"News Fetcher: {category} (every {initial_interval}min)",
+            replace_existing=True
+        )
+        logger.info(
+            "   ✓ [%02d/%02d] %-30s → every %d min",
+            idx, len(CATEGORIES), category, initial_interval
+        )
+
     logger.info("")
-    logger.info("✅ Job #1 Registered: 📰 News Fetcher")
-    logger.info("   ⏱️  Schedule: Every 1 hour")
-    logger.info("   📋 Task: Direct Fetch -> Deduplicate -> Store (Appwrite)")
+    logger.info("✅ Job #1 Group Registered: 📰 %d Adaptive News Fetchers", len(CATEGORIES))
+    logger.info("   Intervals range from 5 min (high-velocity) to 60 min (quiet)")
     
     # Cleanup Job (Frequency: Every 30 minutes)
     scheduler.add_job(
