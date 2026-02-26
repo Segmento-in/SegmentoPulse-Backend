@@ -13,6 +13,7 @@ import pytz
 from app.services.news_aggregator import NewsAggregator
 from app.services.appwrite_db import get_appwrite_db
 from app.services.cache_service import CacheService
+from app.services.upstash_cache import get_upstash_cache   # Needed to bust stale news_v3 keys
 from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
 from app.services.research_aggregator import ResearchAggregator
 from app.config import settings
@@ -301,7 +302,31 @@ async def fetch_single_category_job(category: str):
                 invalid_count, irrelevant_count
             )
 
-            # Step 3: Update Redis article cache so the API serves fresh results.
+            # Step 3a: Bust the Upstash news_v3 cache for this category.
+            #
+            # The news route (/api/news/<category>) caches its response in Upstash
+            # under the key  "news_v3:<category>:page:<N>:l<limit>".
+            # Without this delete, a user hitting the page right after an Appwrite
+            # save would still get the stale 5-minute-old response (which may be
+            # empty), because the cache has not expired yet.
+            #
+            # Fix: the moment we save new articles, we surgically delete page-1
+            # of this category's cache. This forces the very next API call to
+            # bypass the cache and read fresh data from Appwrite.
+            if saved_count > 0:
+                try:
+                    upstash = get_upstash_cache()
+                    # Delete the most-visited page (page 1, default limit 20).
+                    # Other pages will expire naturally on their 5-min TTL.
+                    stale_key = f"news_v3:{category}:page:1:l20"
+                    await upstash.delete(stale_key)
+                    logger.info("[CACHE BUST] Deleted stale key '%s' — fresh articles will appear immediately.", stale_key)
+                except Exception as bust_err:
+                    # Cache bust failure is not fatal — articles are already in Appwrite.
+                    # The stale cache will expire on its own in at most 5 minutes.
+                    logger.debug("[CACHE BUST] Could not delete stale key: %s", bust_err)
+
+            # Step 3b: Also update the legacy Redis L1 article cache.
             try:
                 await cache_service.set(f"news:{category}", articles, ttl=settings.CACHE_TTL)
             except Exception as cache_err:

@@ -9,6 +9,7 @@ EMERGENCY HOTFIX (2026-01-23): Fixed AttributeError 'Article' object has no attr
 
 from typing import Dict, Optional, List, Union
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo   # stdlib from Python 3.9+ — no extra install needed
 import re
 from urllib.parse import urlparse
 from dateutil import parser as dateutil_parser
@@ -71,16 +72,21 @@ def is_valid_article(article: Union[Dict, 'Article']) -> bool:
         return False
 
     # ── FRESHNESS GATE ────────────────────────────────────────────────────────
-    # We only want articles published within the last 24 hours.
+    # We only want articles published today, where "today" is measured in
+    # Indian Standard Time (IST = UTC+5:30) — because that is where our
+    # users are.
+    #
+    # Why IST and not UTC?
+    # With UTC midnight as the cutoff, articles published in India between
+    # 12:00 AM IST and 5:30 AM IST (the first 5.5 hours of the Indian day)
+    # were incorrectly rejected, because UTC midnight had not yet arrived.
+    # Switching to IST midnight gives Indian users a full 24-hour day.
     #
     # CRITICAL ORDER: This check runs on the RAW date string, before
     # normalize_article_date() gets a chance to run. That function has a
     # silent fallback: if a date is unparseable it stamps the article with
     # 'right now'. Without this guard, a 3-day-old article with a broken
     # date string would survive normalization and appear fresh.
-    #
-    # Here we do the opposite: if we cannot confidently parse the date,
-    # we reject the article. No date = no entry.
     try:
         if isinstance(raw_date, datetime):
             pub_dt = raw_date
@@ -91,15 +97,18 @@ def is_valid_article(article: Union[Dict, 'Article']) -> bool:
         if pub_dt.tzinfo is None:
             pub_dt = pub_dt.replace(tzinfo=timezone.utc)
 
-        # Midnight UTC today — strict calendar day, not a rolling 24h window.
-        # Example: at 11:59 PM, this is still 00:00:00 of the current day,
-        # so only today's articles pass. Yesterday's articles are rejected
-        # regardless of what time the job fires.
-        cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Step 1: Find midnight IST today.
+        # We get the current moment in IST, then zero out hours/minutes/seconds.
+        # This gives us "12:00:00 AM of today in India".
+        ist_zone   = ZoneInfo("Asia/Kolkata")
+        now_ist    = datetime.now(ist_zone)
+        cutoff_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        if pub_dt < cutoff:
-            # Article is older than 24 hours — reject it here before any
-            # keyword matching or Redis dedup call wastes time on it.
+        # Step 2: The article timestamp may be in any timezone (UTC, EST, etc.).
+        # Python's datetime comparison handles mixed timezones correctly as long
+        # as both sides are timezone-aware — which they both are here.
+        if pub_dt < cutoff_ist:
+            # Article was published before midnight IST today — reject it.
             return False
 
     except Exception:
