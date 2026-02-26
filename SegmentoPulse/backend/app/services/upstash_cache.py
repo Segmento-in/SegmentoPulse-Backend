@@ -61,14 +61,25 @@ class UpstashCache:
         self.enabled = enabled
         self.default_ttl = default_ttl
         
-        # HTTP client with timeout
-        self.client = httpx.Client(
-            timeout=5.0,  # 5 second timeout
-            headers={
-                "Authorization": f"Bearer {rest_token}",
-                "Content-Type": "application/json"
-            }
-        )
+        # Stats tracking
+        self.stats = {
+            'hits': 0,
+            'misses': 0,
+            'sets': 0,
+            'errors': 0
+        }
+        
+    def _get_client(self) -> httpx.AsyncClient:
+        """Lazy initialization of httpx client to avoid asyncio loop issues on Windows"""
+        if not hasattr(self, '_client') or self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=5.0,  # 5 second timeout
+                headers={
+                    "Authorization": f"Bearer {self.rest_token}",
+                    "Content-Type": "application/json"
+                }
+            )
+        return self._client
         
         # Stats tracking
         self.stats = {
@@ -88,7 +99,7 @@ class UpstashCache:
             logger.info(f"   Free Tier: 256 MB data, 50 GB/month bandwidth")
             logger.info("=" * 70)
     
-    def _execute_command(self, command: list) -> Optional[Any]:
+    async def _execute_command(self, command: list) -> Optional[Any]:
         """
         Execute Redis command via REST API
         
@@ -102,7 +113,8 @@ class UpstashCache:
             return None
         
         try:
-            response = self.client.post(
+            client = self._get_client()
+            response = await client.post(
                 f"{self.rest_url}",
                 json=command
             )
@@ -120,7 +132,7 @@ class UpstashCache:
             self.stats['errors'] += 1
             return None
     
-    def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Optional[Any]:
         """
         Get value from cache
         
@@ -134,7 +146,7 @@ class UpstashCache:
             return None
         
         try:
-            result = self._execute_command(["GET", key])
+            result = await self._execute_command(["GET", key])
             
             if result is None:
                 self.stats['misses'] += 1
@@ -152,7 +164,7 @@ class UpstashCache:
             self.stats['errors'] += 1
             return None
     
-    def set(
+    async def set(
         self, 
         key: str, 
         value: Any, 
@@ -185,7 +197,7 @@ class UpstashCache:
             ttl_seconds = ttl if ttl is not None else self.default_ttl
             
             # SETEX command (set with expiration)
-            result = self._execute_command(["SETEX", key, ttl_seconds, serialized])
+            result = await self._execute_command(["SETEX", key, ttl_seconds, serialized])
             
             if result == "OK" or result is not None:
                 self.stats['sets'] += 1
@@ -199,7 +211,7 @@ class UpstashCache:
             self.stats['errors'] += 1
             return False
     
-    def delete(self, key: str) -> bool:
+    async def delete(self, key: str) -> bool:
         """
         Delete key from cache
         
@@ -213,7 +225,7 @@ class UpstashCache:
             return False
         
         try:
-            result = self._execute_command(["DEL", key])
+            result = await self._execute_command(["DEL", key])
             deleted = result == 1
             
             if deleted:
@@ -225,7 +237,7 @@ class UpstashCache:
             logger.error(f"❌ Cache delete error for {key}: {e}")
             return False
     
-    def invalidate_pattern(self, pattern: str) -> int:
+    async def invalidate_pattern(self, pattern: str) -> int:
         """
         Invalidate all keys matching pattern
         
@@ -240,14 +252,14 @@ class UpstashCache:
         
         try:
             # Get all matching keys
-            keys = self._execute_command(["KEYS", pattern])
+            keys = await self._execute_command(["KEYS", pattern])
             
             if not keys:
                 return 0
             
             # Delete all keys
             for key in keys:
-                self._execute_command(["DEL", key])
+                await self._execute_command(["DEL", key])
             
             logger.info(f"🗑️  Invalidated {len(keys)} keys matching '{pattern}'")
             return len(keys)
@@ -288,7 +300,7 @@ class UpstashCache:
         logger.info("=" * 70)
         logger.info("")
     
-    def health_check(self) -> bool:
+    async def health_check(self) -> bool:
         """
         Check if Upstash is reachable
         
@@ -296,7 +308,7 @@ class UpstashCache:
             True if healthy, False otherwise
         """
         try:
-            result = self._execute_command(["PING"])
+            result = await self._execute_command(["PING"])
             healthy = result == "PONG"
             
             if healthy:
@@ -310,10 +322,10 @@ class UpstashCache:
             logger.error(f"❌ Upstash health check error: {e}")
             return False
     
-    def close(self):
+    async def close(self):
         """Close HTTP client"""
-        if hasattr(self, 'client'):
-            self.client.close()
+        if hasattr(self, '_client') and self._client is not None:
+            await self._client.aclose()
 
 
 # Global singleton instance

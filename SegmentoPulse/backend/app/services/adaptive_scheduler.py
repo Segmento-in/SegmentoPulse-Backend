@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Dict, List
 import json
 import os
+import httpx
 
 
 class AdaptiveScheduler:
@@ -48,29 +49,76 @@ class AdaptiveScheduler:
                     'total_articles': 0
                 }
     
+    def _redis_key(self) -> str:
+        """Redis key where velocity data is stored permanently."""
+        return "segmento:adaptive_velocity_state"
+
+    def _redis_headers(self):
+        """Auth headers for the Upstash Redis REST API."""
+        return {"Authorization": f"Bearer {os.getenv('UPSTASH_REDIS_REST_TOKEN', '')}"}
+
+    def _redis_url(self) -> str:
+        """Base URL for the Upstash Redis REST API."""
+        return os.getenv("UPSTASH_REDIS_REST_URL", "")
+
     def _load_velocity_data(self) -> Dict:
-        """Load velocity data from disk (persists across restarts)"""
-        data_file = 'data/velocity_tracking.json'
-        
-        if os.path.exists(data_file):
-            try:
-                with open(data_file, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"Warning: Failed to load velocity data: {e}")
-        
-        return {}
-    
-    def _save_velocity_data(self):
-        """Save velocity data to disk"""
-        data_file = 'data/velocity_tracking.json'
-        os.makedirs('data', exist_ok=True)
-        
+        """
+        Load velocity tracking data from Redis.
+
+        Fix #4 (Phase 7): The old version wrote to a local JSON file
+        (data/velocity_tracking.json). On cloud platforms (Render, Railway,
+        Heroku), local disks are wiped on every deploy, so the system kept
+        forgetting its trained intervals after restarts.
+
+        Redis is permanent — the key lives forever (no TTL) and the adaptive
+        scheduler's memory now survives deploys and server restarts.
+        """
+        redis_url = self._redis_url()
+        if not redis_url:
+            # Redis not configured — start with empty data (same as before).
+            return {}
+
         try:
-            with open(data_file, 'w') as f:
-                json.dump(self.velocity_data, f, indent=2)
+            url = f"{redis_url}/get/{self._redis_key()}"
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get(url, headers=self._redis_headers())
+                data = response.json()
+                # Upstash returns {"result": "<json string>"} or {"result": null}
+                raw = data.get("result")
+                if raw:
+                    return json.loads(raw)
         except Exception as e:
-            print(f"Warning: Failed to save velocity data: {e}")
+            print(f"[ADAPTIVE] Could not load velocity data from Redis ({e}) — starting fresh.")
+
+        return {}
+
+    def _save_velocity_data(self):
+        """
+        Save velocity tracking data to Redis (no expiry — keep forever).
+
+        Uses the Upstash REST API's SET command. No TTL is set so the data
+        persists indefinitely and we never lose our trained intervals.
+        """
+        redis_url = self._redis_url()
+        if not redis_url:
+            # Redis not configured — silently skip, same as before.
+            return
+
+        try:
+            # Serialize the velocity dict to a JSON string.
+            payload = json.dumps(self.velocity_data)
+
+            # Upstash REST: POST /set/<key>  with body = value
+            # No EX or PX param = key never expires.
+            url = f"{redis_url}/set/{self._redis_key()}"
+            with httpx.Client(timeout=5.0) as client:
+                client.post(
+                    url,
+                    headers=self._redis_headers(),
+                    content=payload.encode("utf-8")
+                )
+        except Exception as e:
+            print(f"[ADAPTIVE] Could not save velocity data to Redis ({e}) — data may be lost on restart.")
     
     def update_category_velocity(self, category: str, article_count: int):
         """
@@ -115,11 +163,55 @@ class AdaptiveScheduler:
             print(f"📊 {category.upper()}: Moderate velocity ({avg_count:.1f} avg) → 15min interval")
         
         data['interval'] = new_interval
-        
-        # Persist to disk
-        self._save_velocity_data()
-        
+
+        # NOTE: We no longer call _save_velocity_data() here.
+        # Reason: this method is sync, but it is called from an async job.
+        # Calling a blocking httpx.Client inside an async function freezes the
+        # entire event loop for up to 5 seconds on every category run.
+        # The caller (fetch_single_category_job) is responsible for awaiting
+        # async_persist() AFTER this method returns. That way the save
+        # happens asynchronously without blocking anything.
+
         return new_interval
+
+    async def async_persist(self):
+        """
+        Save velocity data to Redis using a non-blocking async HTTP call.
+
+        Why a separate method?
+        -----------------------
+        update_category_velocity() is a regular (sync) function because it is
+        called from many places, including some that are not async.
+        Putting an async HTTP call directly inside a sync function would block
+        the entire event loop — freezing FastAPI's ability to serve user
+        requests for up to 5 seconds.
+
+        The fix:
+          update_category_velocity() updates memory only (instant, no I/O).
+          async_persist() does the actual Redis write asynchronously.
+          The caller (fetch_single_category_job) awaits this after the update.
+        """
+        redis_url = self._redis_url()
+        if not redis_url:
+            return
+
+        try:
+            payload = json.dumps(self.velocity_data)
+            url = f"{redis_url}/set/{self._redis_key()}"
+
+            # httpx.AsyncClient never blocks the event loop.
+            # Even if the Upstash call takes 200ms, FastAPI keeps serving users.
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    url,
+                    headers=self._redis_headers(),
+                    content=payload.encode("utf-8")
+                )
+        except Exception as e:
+            print(
+                f"[ADAPTIVE] Could not persist velocity data to Redis ({e}) "
+                "\u2014 data is safe in memory for this session."
+            )
     
     def get_interval(self, category: str) -> int:
         """Get current interval for a category"""

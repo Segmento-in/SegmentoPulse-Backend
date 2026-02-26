@@ -137,8 +137,8 @@ async def cache_health_check():
         
         # Test connectivity with a simple PING
         test_key = "_health_check_test"
-        cache.set(test_key, "ok", ttl=10)
-        result = cache.get(test_key)
+        await cache.set(test_key, "ok", ttl=10)
+        result = await cache.get(test_key)
         
         if result == "ok":
             return {
