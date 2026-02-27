@@ -97,8 +97,8 @@ class CursorPagination:
             filters.append(Query.equal('source', 'Medium'))
         elif category == 'linkedin-article':
             filters.append(Query.equal('source', 'LinkedIn'))
-        elif category == 'research':
-            # Root research category - fetch all papers (no category filter)
+        elif category in ('research', 'data-articles'):
+            # Root categories - fetch all articles in collection (no category filter)
             pass
         else:
             # Standard category filter
