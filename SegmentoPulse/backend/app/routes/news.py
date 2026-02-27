@@ -90,7 +90,7 @@ async def get_news_by_category(
             ]
             
             # Apply category filter logic (same as CursorPagination)
-            if category != 'research':
+            if category not in ('research', 'data-articles'):
                 queries.insert(0, Query.equal('category', category))
         else:
             # Default: Cursor Pagination (Preferred)

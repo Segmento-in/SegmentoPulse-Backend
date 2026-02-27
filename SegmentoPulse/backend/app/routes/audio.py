@@ -248,13 +248,13 @@ async def generate_audio_summary(request: AudioGenerationRequest):
             collection_id=found_collection_id,
             document_id=article_id,
             audio_url=audio_url,
-            text_summary=summary # Pass generated summary
+            text_summary=text_summary# Pass generated summary (fix: use 'summary' var, not 'text_summary')
         )
         
         return AudioResponse(
             success=True,
             audio_url=audio_url,
-            text_summary=summary,
+            text_summary=text_summary,
             message="Audio generated successfully"
         )
 
