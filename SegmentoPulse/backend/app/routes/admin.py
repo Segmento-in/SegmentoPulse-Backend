@@ -3,6 +3,7 @@ from typing import Dict, List
 import asyncio
 from app.services.news_aggregator import NewsAggregator
 from app.services.cache_service import CacheService
+from app.services.circuit_breaker import get_circuit_breaker
 from app.config import settings
 
 router = APIRouter()
@@ -50,7 +51,11 @@ async def warm_cache():
         - categories_failed: Number of categories that failed
         - details: Per-category results with article counts
     """
-    news_aggregator = NewsAggregator()
+    from app.services.scheduler import _get_shared_aggregator
+    
+    # Fix 3: Using the shared singleton ensures admin cache-warming
+    # respects the same API quotas and circuit breakers as the scheduler.
+    shared_aggregator = _get_shared_aggregator()
     cache_service = CacheService()
     
     results = {
@@ -63,7 +68,7 @@ async def warm_cache():
             print(f"[Cache Warming] Fetching {category}...")
             
             # Fetch articles from news aggregator (tries all providers with failover)
-            articles = await news_aggregator.fetch_by_category(category)
+            articles = await shared_aggregator.fetch_by_category(category)
             
             if articles:
                 # Cache the articles with configured TTL (600 seconds)
@@ -117,8 +122,12 @@ async def get_cache_stats():
         - Cache TTL configuration
         - Provider statistics
     """
+    from app.services.scheduler import _get_shared_aggregator
+    
     cache_service = CacheService()
-    news_aggregator = NewsAggregator()
+    
+    # Fix 3: Get stats from the exact same instance that is doing the fetching
+    shared_aggregator = _get_shared_aggregator()
     
     cached_categories = []
     
@@ -131,7 +140,7 @@ async def get_cache_stats():
             })
     
     # Get provider statistics
-    provider_stats = news_aggregator.get_stats()
+    provider_stats = shared_aggregator.get_stats()
     
     return {
         "cache_ttl": settings.CACHE_TTL,
@@ -239,12 +248,15 @@ async def populate_database():
     - Recovery after database cleanup
     """
     from app.services.appwrite_db import get_appwrite_db
-    from app.services.news_aggregator import NewsAggregator
+    from app.services.scheduler import _get_shared_aggregator
     import asyncio
     
     try:
         appwrite_db = get_appwrite_db()
-        news_aggregator = NewsAggregator()
+        
+        # Fix 3: Use the shared aggregator to respect quotas and circuit breakers
+        # during massive full-database populate operations.
+        shared_aggregator = _get_shared_aggregator()
         
         results = {
             "successful": [],
@@ -256,7 +268,7 @@ async def populate_database():
                 print(f"[DB Populate] Fetching {category}...")
                 
                 # Fetch articles from external APIs
-                articles = await news_aggregator.fetch_by_category(category)
+                articles = await shared_aggregator.fetch_by_category(category)
                 
                 if articles:
                     # Save to Appwrite database
@@ -770,3 +782,60 @@ async def bloom_filter_health_check():
             "recommendation": "Check server logs for detailed error information"
         }
 
+
+# ===========================================
+# Circuit Breaker Management (Fix 1b)
+# ===========================================
+
+@router.post("/circuits/reset")
+async def reset_circuit_breakers():
+    """
+    Emergency Circuit Breaker Reset
+
+    Run this endpoint right after any redeployment where you fixed a broken
+    API key. It does two things:
+
+      1. Deletes all 'circuit:{provider}:state' keys from Upstash Redis,
+         so the newly fixed provider isn't blocked by a stale Redis record.
+
+      2. Resets the in-memory circuit state for all providers back to CLOSED,
+         so the very next scheduler run can immediately try the provider again.
+
+    Without this, a redeployment with a fixed API key could be blocked for
+    up to 1 hour by the old Redis state written by the previous broken key.
+
+    Usage:
+        curl -X POST http://your-server/api/admin/circuits/reset
+    """
+    try:
+        from app.services.upstash_cache import get_upstash_cache
+
+        circuit = get_circuit_breaker()
+
+        # Step 1: Wipe all Redis circuit keys for known providers.
+        cache = get_upstash_cache()
+        known_providers = ["gnews", "newsapi", "newsdata", "google_rss", "medium", "official_cloud"]
+        deleted_keys = []
+
+        for provider in known_providers:
+            key = f"circuit:{provider}:state"
+            result = await cache._execute_command(["DEL", key])
+            if result and int(result) > 0:
+                deleted_keys.append(key)
+
+        # Step 2: Reset the in-memory circuit state (all providers go to CLOSED).
+        circuit.reset()
+
+        return {
+            "success": True,
+            "message": "All circuit breakers have been reset. Paid providers will be tried on the next scheduler run.",
+            "redis_keys_deleted": deleted_keys,
+            "redis_keys_checked": [f"circuit:{p}:state" for p in known_providers],
+            "note": "Run this after fixing a broken API key and redeploying."
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset circuit breakers: {str(e)}"
+        )

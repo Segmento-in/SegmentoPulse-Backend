@@ -80,62 +80,70 @@ class GNewsProvider(NewsProvider):
         }
     
     async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:
-        """Fetch news from GNews API"""
+        """
+        Fetch news from GNews API.
+
+        Why no 'from'/'to' date filter here?
+        GNews free/basic tier does NOT support date filtering and returns HTTP 403
+        or an error payload when those params are sent. Removing them lets GNews
+        work reliably on any plan tier. Our data_validation.py freshness gate
+        already rejects old articles downstream, so date filtering still happens
+        — just at the right place.
+        """
         if not self.api_key:
             return []
-        
+
         try:
             query = self.category_map.get(category, category)
             url = f"{self.base_url}/search"
 
-            # Build a window from midnight IST today (converted to UTC) to right now.
-            #
-            # Why IST midnight and not UTC midnight?
-            # IST is UTC+5:30. If we used UTC midnight as the "from" date, GNews
-            # would skip articles published in India between 12:00 AM IST and
-            # 5:30 AM IST — the first 5.5 hours of the Indian day.
-            # By computing IST midnight and converting it to UTC, we tell GNews:
-            # "Give me everything published since the Indian day started".
-            _ist_zone   = ZoneInfo("Asia/Kolkata")
-            _now_ist    = datetime.now(_ist_zone)
-            _cutoff_ist = _now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
-            # Convert IST midnight → UTC so the API gets a valid UTC timestamp.
-            _cutoff_utc = _cutoff_ist.astimezone(timezone.utc)
-            # Current moment in UTC for the "to" bound.
-            _now_utc    = datetime.now(timezone.utc)
-
+            # Simple, plan-compatible request — no date window.
             params = {
                 'q': query,
                 'lang': 'en',
                 'country': 'us',
                 'max': min(limit, 10),  # GNews free tier max 10
                 'apikey': self.api_key,
-                'from': _cutoff_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),  # IST midnight in UTC
-                'to':   _now_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
             }
-            
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(url, params=params)
-                
+
                 if response.status_code == 429:
                     print("[WARN] [GNews] Rate limit hit! Switching to next provider...")
                     self.mark_rate_limited()
                     return []
-                
+
                 if response.status_code == 200:
                     self.request_count += 1
                     data = response.json()
-                    articles = self._parse_response(data, category)
+
+                    # FIX (Bug B): GNews sometimes returns HTTP 200 but puts an
+                    # 'errors' key in the JSON body when the API key is wrong or
+                    # a plan restriction is hit.
+                    # We raise here so the aggregator's except block catches it
+                    # and calls circuit.record_failure() automatically.
+                    # That way the circuit breaker knows this is a real failure,
+                    # not just a quiet day with no news.
+                    if data.get('errors'):
+                        raise RuntimeError(
+                            f"[GNews] API error payload: {data.get('errors')}"
+                        )
+
                     articles = self._parse_response(data, category)
                     if articles:
                         print(f"[SUCCESS] [GNews] Fetched {len(articles)} articles successfully")
                     else:
-                        print("[WARN] [GNews] No articles found in response")
+                        print("[WARN] [GNews] No articles this run (API is healthy, just quiet)")
                     return articles
                 else:
                     print(f"[ERROR] [GNews] HTTP {response.status_code} error")
-                
+
                 return []
+        except RuntimeError:
+            # Re-raise RuntimeError (our intentional error-payload signal)
+            # so the aggregator's except block records this as a circuit failure.
+            raise
         except Exception as e:
             print(f"[ERROR] [GNews] API error: {e}")
             return []
@@ -197,45 +205,63 @@ class NewsAPIProvider(NewsProvider):
         }
     
     async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:
-        """Fetch news from NewsAPI"""
+        """
+        Fetch news from NewsAPI.
+
+        Why no 'from' date filter here?
+        Some NewsAPI plan tiers restrict date filtering and return status='error'
+        when a date param is included. Removing the filter makes the request
+        plan-agnostic. Our data_validation.py freshness gate handles date
+        filtering downstream.
+        """
         if not self.api_key:
             return []
-        
+
         try:
             query = self.category_keywords.get(category, category)
             url = f"{self.base_url}/everything"
 
-            # Ask NewsAPI for articles published since midnight IST today.
-            # We compute IST midnight and convert it to UTC before sending it
-            # to the API, because NewsAPI expects UTC timestamps.
-            # This gives Indian users full coverage from their midnight onwards.
-            _ist_zone   = ZoneInfo("Asia/Kolkata")
-            _now_ist    = datetime.now(_ist_zone)
-            _cutoff_ist = _now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
-            _cutoff_utc = _cutoff_ist.astimezone(timezone.utc)  # Convert to UTC for the API
-
+            # Simple, plan-compatible request — no date window.
             params = {
                 'q': query,
                 'language': 'en',
                 'sortBy': 'publishedAt',
                 'pageSize': min(limit, 20),
                 'apiKey': self.api_key,
-                'from': _cutoff_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),  # IST midnight in UTC
             }
-            
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(url, params=params)
-                
+
                 if response.status_code == 429 or response.status_code == 426:
                     self.mark_rate_limited()
                     return []
-                
+
                 if response.status_code == 200:
                     self.request_count += 1
                     data = response.json()
-                    return self._parse_response(data, category)
-                
+
+                    # FIX (Bug B): NewsAPI returns HTTP 200 but sets status='error'
+                    # in the JSON when the API key is invalid or a plan restriction
+                    # is hit. We raise here so the aggregator's except block catches
+                    # it and calls circuit.record_failure() automatically.
+                    if data.get('status') == 'error':
+                        raise RuntimeError(
+                            f"[NewsAPI] API error: {data.get('message', 'unknown error')}"
+                        )
+
+                    articles = self._parse_response(data, category)
+                    if articles:
+                        print(f"[SUCCESS] [NewsAPI] Fetched {len(articles)} articles successfully")
+                    else:
+                        print("[WARN] [NewsAPI] No articles this run (API is healthy, just quiet)")
+                    return articles
+
                 return []
+        except RuntimeError:
+            # Re-raise RuntimeError (our intentional error-payload signal)
+            # so the aggregator's except block records this as a circuit failure.
+            raise
         except Exception as e:
             print(f"NewsAPI error: {e}")
             return []
