@@ -856,7 +856,7 @@ class AppwriteDatabase:
             if text_summary:
                 data['text_summary'] = text_summary
                 
-            self.tablesDB.update_row(
+            await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=collection_id,
                 document_id=document_id,
