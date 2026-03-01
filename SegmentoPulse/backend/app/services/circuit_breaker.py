@@ -90,14 +90,15 @@ class ProviderCircuitBreaker:
         logger.info(f"   Redis persistence: ENABLED")
         logger.info("=" * 70)
 
-        # Kick off a background restore from Redis.
-        # Fix 2: asyncio.get_event_loop() is deprecated.
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._load_from_redis())
-        except RuntimeError:
-            # No running event loop (e.g., during synchronous initialization or tests).
-            pass
+        # NOTE: We deliberately do NOT try to load Redis state here.
+        #
+        # When Python imports this file, FastAPI's event loop is NOT running yet.
+        # Calling asyncio.get_running_loop() at import-time raises RuntimeError,
+        # and we would silently swallow it — meaning the restore never happens.
+        #
+        # The correct approach: main.py calls startup_circuit_breaker() from the
+        # FastAPI lifespan hook, AFTER the event loop is fully alive.
+        # See the bottom of this file for that function.
 
     # ──────────────────────────────────────────────────────────────────────────
     # Redis Helpers
@@ -446,19 +447,45 @@ _circuit_breaker: Optional[ProviderCircuitBreaker] = None
 
 def get_circuit_breaker() -> ProviderCircuitBreaker:
     """
-    Get or create global circuit breaker instance
+    Get or create global circuit breaker instance.
 
-    Returns:
-        ProviderCircuitBreaker: Singleton instance
+    This is a lazy singleton — it creates the breaker the first time it's
+    called and returns the same object on every call after that.
+    It does NOT load Redis state here. That happens in startup_circuit_breaker().
     """
     global _circuit_breaker
 
     if _circuit_breaker is None:
         _circuit_breaker = ProviderCircuitBreaker(
-            failure_threshold=3,  # 3 failures
-            failure_window=300,   # in 5 minutes
-            open_duration=3600,   # skip for 1 hour
-            half_open_max_attempts=1  # 1 test request
+            failure_threshold=3,  # 3 failures...
+            failure_window=300,   # ...within 5 minutes = circuit OPEN
+            open_duration=3600,   # skip provider for 1 hour
+            half_open_max_attempts=1  # allow 1 test request after the hour
         )
 
     return _circuit_breaker
+
+
+async def startup_circuit_breaker():
+    """
+    Load saved circuit states from Redis on server startup.
+
+    This function is called by FastAPI's lifespan hook in main.py,
+    AFTER the event loop is fully running. Calling it here (instead of
+    inside __init__) is the correct way to run async work at boot time.
+
+    If Redis is offline, we log a warning and continue — the breaker
+    will just start with all circuits CLOSED, which is safe.
+    """
+    logger.info("[CIRCUIT BREAKER] Running startup Redis restore...")
+    try:
+        breaker = get_circuit_breaker()
+        await breaker._load_from_redis()
+        logger.info("[CIRCUIT BREAKER] Startup Redis restore complete.")
+    except Exception as e:
+        # Redis is offline or unreachable — not a crash, just a warning.
+        # The circuit breaker will work fine in memory-only mode.
+        logger.warning(
+            "[CIRCUIT BREAKER] Startup Redis restore failed (%s). "
+            "Starting with all circuits CLOSED — this is safe.", e
+        )

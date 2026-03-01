@@ -34,6 +34,9 @@ from app.routes import news, search, analytics, subscription, admin, audio
 # Import scheduler functions
 from app.services.scheduler import start_scheduler, shutdown_scheduler
 
+# Import the circuit breaker startup hook (loads Redis state after event loop is live)
+from app.services.circuit_breaker import startup_circuit_breaker
+
 
 from app.services.browser_manager import browser_manager
 
@@ -50,6 +53,11 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
     print("🚀 Starting Segmento Pulse Backend...")
     start_scheduler()
+
+    # Fix 1: Load circuit breaker states from Redis NOW — the event loop is
+    # fully alive at this point, so the async restore will actually run.
+    await startup_circuit_breaker()
+
     await browser_manager.start()
     print("=" * 60)
     

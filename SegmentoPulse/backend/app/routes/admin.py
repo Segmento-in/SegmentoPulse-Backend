@@ -1,115 +1,76 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Dict, List
 import asyncio
-from app.services.news_aggregator import NewsAggregator
+import logging
 from app.services.cache_service import CacheService
 from app.services.circuit_breaker import get_circuit_breaker
-from app.config import settings
+from app.config import settings, CATEGORIES
+# Note: NewsAggregator is NOT imported at the top level.
+# All admin endpoints use _get_shared_aggregator() from scheduler.py so they
+# share the same quota counters and circuit breaker as the background jobs.
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# All supported news categories
-CATEGORIES = [
-    "ai",
-    "data-security",
-    "data-governance",
-    "data-privacy",
-    "data-engineering",
-    "business-intelligence",
-    "business-analytics",
-    "customer-data-platform",
-    "data-centers",
-    "cloud-computing",
-    "magazines",
-    "data-laws",
-    # Official Cloud Categories
-    "cloud-aws",
-    "cloud-azure",
-    "cloud-gcp",
-    "cloud-oracle",
-    "cloud-ibm",
-    "cloud-alibaba",
-    "cloud-digitalocean",
-    "cloud-huawei",
-    "cloud-cloudflare"
-]
 
 @router.post("/cache/warm")
-async def warm_cache():
+async def warm_cache(background_tasks: BackgroundTasks):
     """
-    Cache Warming Endpoint - Phase 1 Optimization
-    
-    Proactively fetches news for all categories and populates Redis cache.
-    This eliminates the "cold start" problem by pre-loading data before user requests.
-    
-    Usage:
-        curl -X POST http://localhost:8000/api/admin/cache/warm
-    
-    Returns:
-        - status: Success/failure message
-        - categories_warmed: Number of categories successfully cached
-        - categories_failed: Number of categories that failed
-        - details: Per-category results with article counts
+    Start a background cache-warm job for all categories.
+
+    Fix 2: The old version looped through all 22 categories in the request
+    itself, which took 20+ seconds and caused a 504 Gateway Timeout.
+
+    Now we return immediately so the browser gets a fast response, and the
+    real work happens in a background task that the server runs on its own.
+    Progress is logged to the server terminal via logger.
+    """
+    background_tasks.add_task(_warm_cache_background)
+    return {
+        "status": "started",
+        "message": "Cache warming is running in the background. Check server logs for progress."
+    }
+
+
+async def _warm_cache_background():
+    """
+    The actual cache-warming work — runs in the background so the HTTP
+    request can return immediately without hitting a 504 timeout.
     """
     from app.services.scheduler import _get_shared_aggregator
-    
-    # Fix 3: Using the shared singleton ensures admin cache-warming
-    # respects the same API quotas and circuit breakers as the scheduler.
+
+    logger.info("[Cache Warm] Starting background warm for %d categories...", len(CATEGORIES))
     shared_aggregator = _get_shared_aggregator()
     cache_service = CacheService()
-    
-    results = {
-        "successful": [],
-        "failed": []
-    }
-    
+
+    successful = []
+    failed = []
+
     for category in CATEGORIES:
         try:
-            print(f"[Cache Warming] Fetching {category}...")
-            
-            # Fetch articles from news aggregator (tries all providers with failover)
+            logger.info("[Cache Warm] Fetching %s...", category)
+
             articles = await shared_aggregator.fetch_by_category(category)
-            
+
             if articles:
-                # Cache the articles with configured TTL (600 seconds)
                 await cache_service.set(f"news:{category}", articles, ttl=settings.CACHE_TTL)
-                
-                results["successful"].append({
-                    "category": category,
-                    "article_count": len(articles),
-                    "cached": True
-                })
-                print(f"✓ [Cache Warming] {category}: {len(articles)} articles cached")
+                successful.append(category)
+                logger.info("[Cache Warm] ✓ %s — %d articles cached.", category, len(articles))
             else:
-                results["failed"].append({
-                    "category": category,
-                    "error": "No articles returned from providers"
-                })
-                print(f"✗ [Cache Warming] {category}: No articles available")
-            
-            # Rate limiting: Wait 1 second between API calls to avoid overwhelming providers
+                failed.append(category)
+                logger.warning("[Cache Warm] ✗ %s — no articles returned.", category)
+
+            # Small pause between categories to be kind to the providers.
             await asyncio.sleep(1)
-            
+
         except Exception as e:
-            results["failed"].append({
-                "category": category,
-                "error": str(e)
-            })
-            print(f"✗ [Cache Warming] {category}: Error - {e}")
-    
-    # Prepare response summary
-    categories_warmed = len(results["successful"])
-    categories_failed = len(results["failed"])
-    
-    return {
-        "status": "completed",
-        "message": f"Cache warming completed: {categories_warmed} successful, {categories_failed} failed",
-        "categories_warmed": categories_warmed,
-        "categories_failed": categories_failed,
-        "total_categories": len(CATEGORIES),
-        "cache_ttl": settings.CACHE_TTL,
-        "details": results
-    }
+            failed.append(category)
+            logger.error("[Cache Warm] ✗ %s — error: %s", category, e)
+
+    logger.info(
+        "[Cache Warm] Done. %d/%d categories warmed. Failed: %s",
+        len(successful), len(CATEGORIES), failed or "none"
+    )
 
 
 @router.get("/cache/stats")
