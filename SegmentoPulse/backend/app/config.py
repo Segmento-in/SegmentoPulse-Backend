@@ -100,3 +100,40 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SINGLE SOURCE OF TRUTH — All news categories supported by Segmento Pulse.
+#
+# WHY IS THIS HERE?
+# We used to keep the category list in both scheduler.py and admin.py.
+# That caused "phantom category" bugs where one file had a category the
+# other didn't (e.g., data-management was missing from admin.py).
+#
+# Now there is exactly ONE list. If you want to add or remove a category,
+# change it here and it automatically applies everywhere.
+# ─────────────────────────────────────────────────────────────────────────────
+CATEGORIES: list[str] = [
+    "ai",
+    "data-security",
+    "data-governance",
+    "data-privacy",
+    "data-engineering",
+    "data-management",           # ← was missing from admin.py before
+    "business-intelligence",
+    "business-analytics",
+    "customer-data-platform",
+    "data-centers",
+    "cloud-computing",
+    "magazines",
+    "data-laws",
+    # Official Cloud Provider Categories
+    "cloud-aws",
+    "cloud-azure",
+    "cloud-gcp",
+    "cloud-oracle",
+    "cloud-ibm",
+    "cloud-alibaba",
+    "cloud-digitalocean",
+    "cloud-huawei",
+    "cloud-cloudflare",
+]

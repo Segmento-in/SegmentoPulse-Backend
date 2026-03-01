@@ -25,32 +25,9 @@ logger = logging.getLogger(__name__)
 # Initialize scheduler
 scheduler = AsyncIOScheduler()
 
-# All news categories
-CATEGORIES = [
-    "ai",
-    "data-security",
-    "data-governance",
-    "data-privacy",
-    "data-engineering",
-    "data-management",
-    "business-intelligence",
-    "business-analytics",
-    "customer-data-platform",
-    "data-centers",
-    "cloud-computing",
-    "magazines",
-    "data-laws",
-    # Official Cloud Categories
-    "cloud-aws",
-    "cloud-azure",
-    "cloud-gcp",
-    "cloud-oracle",
-    "cloud-ibm",
-    "cloud-alibaba",
-    "cloud-digitalocean",
-    "cloud-huawei",
-    "cloud-cloudflare"
-]
+# Import the single source of truth for categories.
+# The full list now lives in app/config.py — edit it there, not here.
+from app.config import CATEGORIES
 
 # --------------------------------------------------------------------------
 # MODULE-LEVEL SINGLETONS (Phase 6)
