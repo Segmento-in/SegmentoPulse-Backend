@@ -18,6 +18,20 @@ from app.config import settings
 from app.services.api_quota import get_quota_tracker
 from app.services.circuit_breaker import get_circuit_breaker
 
+# ── Phases 3-11: New modular providers (Strangler Fig pattern) ──────────────
+# These live in providers/ folder. The legacy news_providers.py is NOT touched.
+# We import each new provider here and the aggregator runs both old and new
+# providers side-by-side safely.
+from app.services.providers.hackernews.client import HackerNewsProvider
+from app.services.providers.direct_rss.client import DirectRSSProvider
+from app.services.providers.thenewsapi.client import TheNewsAPIProvider
+from app.services.providers.inshorts.client import InshortsProvider
+from app.services.providers.sauravkanchan.client import SauravKanchanProvider
+from app.services.providers.worldnewsai.client import WorldNewsAIProvider
+from app.services.providers.openrss.client import OpenRSSProvider
+from app.services.providers.webz.client import WebzProvider
+from app.services.providers.wikinews.client import WikinewsProvider
+
 class NewsAggregator:
     """Service for aggregating news from multiple sources with automatic failover"""
     
@@ -48,12 +62,54 @@ class NewsAggregator:
         
         # Official Cloud Provider (Strict Isolation)
         self.providers['official_cloud'] = OfficialCloudProvider()
+
+        # Direct RSS from premium tech publications (TechCrunch, Wired, The Verge,
+        # Engadget, Ars Technica). Free, no key, great images and descriptions.
+        # Runs for ALL categories — the keyword gate filters off-topic results.
+        self.providers['direct_rss'] = DirectRSSProvider()
+
+        # TheNewsAPI.com — Position 4 in the PAID_CHAIN (failover after the
+        # existing 3 paid providers). 100 requests/day on the free tier.
+        # Only registered when the API key is present in the environment.
+        if settings.THENEWSAPI_API_KEY:
+            self.providers['thenewsapi'] = TheNewsAPIProvider(
+                api_key=settings.THENEWSAPI_API_KEY
+            )
+
+        # WorldNewsAI.com — Position 5 in the PAID_CHAIN (final paid failover).
+        # Point-based quota, conservative daily_limit = 50 calls.
+        # Gives global, non-US-centric news from tens of thousands of sources.
+        # Only registered when the API key is present in the environment.
+        if settings.WORLDNEWS_API_KEY:
+            self.providers['worldnewsai'] = WorldNewsAIProvider(
+                api_key=settings.WORLDNEWS_API_KEY
+            )
+
+        # OpenRSS.org — generates feeds for sites with no native RSS.
+        # Free, no key. Has strict 60-minute internal cooldown to avoid IP ban.
+        # Runs for ALL categories — no category guardrail needed.
+        # The cooldown timer is the only protection this provider needs.
+        self.providers['openrss'] = OpenRSSProvider()
+
+        # Webz.io — Position 6 in the PAID_CHAIN (deepest paid failover).
+        # Enterprise-grade crawl from 3.5M articles/day. Rich, global coverage.
+        # 1,000 calls/month free tier — paced to 30/day = ~900/month (10% margin).
+        # Only registered when the API key is present in the environment.
+        if settings.WEBZ_API_KEY:
+            self.providers['webz'] = WebzProvider(
+                api_key=settings.WEBZ_API_KEY
+            )
+
+        # Wikinews — Public Domain, copyright-bulletproof tech news.
+        # Free, no key. Searches 'Computing' and 'Internet' categories concurrently.
+        # Gated behind GENERAL_TECH_CATEGORIES (broad tech content only).
+        self.providers['wikinews'] = WikinewsProvider()
         
         # ── Provider role lists ──────────────────────────────────────────────
         # PAID_CHAIN: tried in order, stop after the first success (save credits)
         # FREE_SOURCES: always tried, always in parallel (no cost, no limits)
-        self.PAID_CHAIN  = ['gnews', 'newsapi', 'newsdata']
-        self.FREE_SOURCES = ['google_rss', 'medium', 'official_cloud']
+        self.PAID_CHAIN  = ['gnews', 'newsapi', 'newsdata', 'thenewsapi', 'worldnewsai', 'webz']
+        self.FREE_SOURCES = ['google_rss', 'medium', 'official_cloud', 'direct_rss', 'hacker_news', 'inshorts', 'saurav_static', 'openrss', 'wikinews']
 
         # Medium only publishes articles for a small set of topics.
         # Calling it for 'data-centers' or 'cloud-oracle' would return nothing.
@@ -70,6 +126,30 @@ class NewsAggregator:
                 'cloud-huawei', 'cloud-cloudflare'
             ]
         }
+
+        # ── Phase 3: Hacker News Category Guardrail ──────────────────────────
+        # Hacker News gives broad tech news — it does NOT know about "cloud-alibaba"
+        # or "data-governance". Asking it for niche categories wastes CPU cycles
+        # and risks polluting those collections with off-topic articles.
+        # Only enable Hacker News for the broad categories below where it adds value.
+        self.GENERAL_TECH_CATEGORIES = {
+            'ai', 'magazines', 'data-engineering', 'cloud-computing',
+            'data-security', 'business-intelligence'
+        }
+
+        # Register the Hacker News provider (free, no key needed).
+        # It lives in providers/hackernews/client.py — completely isolated from
+        # the legacy news_providers.py file.
+        self.providers['hacker_news'] = HackerNewsProvider()
+
+        # Inshorts — 60-word tech summaries. Free, no key, broad tech topics.
+        # Gated behind GENERAL_TECH_CATEGORIES (same as Hacker News).
+        self.providers['inshorts'] = InshortsProvider()
+
+        # SauravKanchan static JSON — reads two GitHub Pages files (IN + US).
+        # Zero cost, zero rate limits, NewsAPI-format data structure.
+        # Gated behind GENERAL_TECH_CATEGORIES (broad tech news only).
+        self.providers['saurav_static'] = SauravKanchanProvider()
         
         # Cloud provider RSS feeds
         self.cloud_rss_urls = {
@@ -226,6 +306,46 @@ class NewsAggregator:
                 if official.is_available():
                     free_tasks.append(official.fetch_news(category, limit=10))
                     free_names.append('official_cloud')
+
+        # ── Phase 3: Hacker News Guardrail ────────────────────────────────────
+        # Only fire Hacker News when the category is a broad tech topic.
+        # For niche categories (e.g., cloud-alibaba), we skip it entirely.
+        if category in self.GENERAL_TECH_CATEGORIES:
+            hn = self.providers.get('hacker_news')
+            if hn and not self.circuit.should_skip('hacker_news'):
+                if hn.is_available():
+                    free_tasks.append(hn.fetch_news(category, limit=30))
+                    free_names.append('hacker_news')
+
+        # ── Phase 6: Inshorts Guardrail ─────────────────────────────────────
+        # Same rule as Hacker News: only fire for broad tech categories.
+        # Inshorts covers general tech, not niche cloud or governance topics.
+        if category in self.GENERAL_TECH_CATEGORIES:
+            inshorts = self.providers.get('inshorts')
+            if inshorts and not self.circuit.should_skip('inshorts'):
+                if inshorts.is_available():
+                    free_tasks.append(inshorts.fetch_news(category, limit=20))
+                    free_names.append('inshorts')
+
+        # ── Phase 7: SauravKanchan Guardrail ─────────────────────────────────
+        # Static JSON files (IN + US). Same guardrail as Hacker News and Inshorts.
+        # Broad tech content only — niche categories get no value from these files.
+        if category in self.GENERAL_TECH_CATEGORIES:
+            saurav = self.providers.get('saurav_static')
+            if saurav and not self.circuit.should_skip('saurav_static'):
+                if saurav.is_available():
+                    free_tasks.append(saurav.fetch_news(category, limit=50))
+                    free_names.append('saurav_static')
+
+        # ── Phase 11: Wikinews Guardrail ──────────────────────────────────
+        # Wikinews searches broad tech categories (Computing + Internet).
+        # No value for niche collections like cloud-alibaba or data-governance.
+        if category in self.GENERAL_TECH_CATEGORIES:
+            wikinews = self.providers.get('wikinews')
+            if wikinews and not self.circuit.should_skip('wikinews'):
+                if wikinews.is_available():
+                    free_tasks.append(wikinews.fetch_news(category, limit=20))
+                    free_names.append('wikinews')
 
         if free_tasks:
             print(f"[FREE]    Launching {len(free_tasks)} free source(s) in parallel for '{category}'...")

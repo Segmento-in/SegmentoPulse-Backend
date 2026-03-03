@@ -17,6 +17,8 @@ from app.services.upstash_cache import get_upstash_cache   # Needed to bust stal
 from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
 from app.services.research_aggregator import ResearchAggregator
 from app.config import settings
+# Phase 13: Global image enrichment — fills missing og:image across ALL providers
+from app.services.utils.image_enricher import extract_top_image
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -377,6 +379,149 @@ async def fetch_daily_research():
     logger.info("═" * 80)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# PHASE 13: GLOBAL IMAGE ENRICHMENT SAFETY NET
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# What this does:
+#   After all validation and deduplication gates have passed, some articles
+#   still arrive with an empty or missing image_url. This happens most often
+#   with providers like OpenRSS (blog feeds without media tags), Webz.io
+#   (small sites without a thread.main_image), and SauravKanchan (NewsAPI
+#   null urlToImage). This function visits the article's URL and tries to
+#   extract the og:image meta tag — the standard way websites declare their
+#   main thumbnail image.
+#
+# Why AFTER deduplication?
+#   We only enrich articles that actually passed every gate and are about to
+#   be saved. We never spend HTTP calls on articles that will be thrown away.
+#
+# Safety guards:
+#   1. MAX_ENRICH_PER_RUN = 20  — Hard cap. If 50 no-image articles arrive,
+#      we only enrich the first 20, leave the rest as "", and the Pulse banner
+#      shows on the frontend. This stops a rogue provider from bottlenecking
+#      the cron job.
+#   2. asyncio.Semaphore(10)    — At most 10 web-page fetches happen at the
+#      same time. This prevents memory spikes and avoids hammering websites.
+#   3. Individual 4-second timeout (inside extract_top_image) — A broken URL
+#      is cancelled in 4 seconds. With Semaphore(10) and MAX 20 articles:
+#      worst-case total overhead = (20 / 10) × 4 = 8 seconds per category run.
+#   4. Zero side-effects — A failed enrichment returns the article unchanged.
+#      The enricher NEVER removes an article from the pipeline.
+#
+async def enrich_missing_images_in_batch(articles: list) -> list:
+    """
+    Scan a list of fully-vetted articles and fill in any missing images.
+
+    Only enriches up to MAX_ENRICH_PER_RUN articles that have no valid
+    image_url. Articles that already have an image are passed through
+    instantly with zero network cost.
+
+    Args:
+        articles (list): Final, deduplicated, validated Article objects.
+
+    Returns:
+        list: Same articles, with image_url filled where possible.
+              Never raises. Never removes an article.
+    """
+    if not articles:
+        return articles
+
+    # ── Constants ─────────────────────────────────────────────────────────────
+    # Cap: only attempt image enrichment on the first 20 articles that need it.
+    # The rest go to the database as-is (empty image = Pulse banner fallback).
+    MAX_ENRICH_PER_RUN = 20
+
+    # Semaphore: at most 10 website fetches run simultaneously.
+    # Think of it like a queue of 10 checkout lanes at a supermarket.
+    # If 20 people arrive at once, 10 go straight through and 10 wait
+    # in line. Nobody gets turned away, but the store doesn't explode.
+    sem = asyncio.Semaphore(10)
+
+    # ── Count how many articles actually need enrichment ───────────────────────
+    articles_needing_images = [
+        a for a in articles
+        if not a.image_url or not a.image_url.startswith("http")
+    ]
+    enrich_count = min(len(articles_needing_images), MAX_ENRICH_PER_RUN)
+
+    if enrich_count == 0:
+        # Every article already has a valid image. Nothing to do.
+        return articles
+
+    logger.info(
+        "🖼️  [IMAGE ENRICHER] %d article(s) missing images — enriching up to %d...",
+        len(articles_needing_images), enrich_count
+    )
+
+    # Build a lookup set of URLs to enrich (only the capped subset).
+    urls_to_enrich = {
+        str(a.url) for a in articles_needing_images[:MAX_ENRICH_PER_RUN]
+    }
+
+    # ── Internal worker: enrich one article ───────────────────────────────────
+    async def _enrich_one(article) -> object:
+        """
+        If this article needs an image, fetch it under the semaphore guard.
+        Returns the article (updated or unchanged).
+        """
+        url_str = str(article.url) if article.url else ""
+
+        # Article already has a valid image, or it's outside the cap — skip.
+        if url_str not in urls_to_enrich:
+            return article
+
+        async with sem:
+            # Semaphore acquired: one of our 10 lanes is now occupied.
+            # extract_top_image has its own 4-second internal timeout,
+            # so this will release the lane quickly regardless of outcome.
+            image_url = await extract_top_image(url_str)
+
+        if image_url and image_url.startswith("http"):
+            # Got a valid image — update the article cleanly.
+            # model_copy() is the correct Pydantic v2 pattern for immutable models.
+            return article.model_copy(update={"image_url": image_url})
+
+        # No image found or fetch failed — return article unchanged.
+        return article
+
+    # ── Run all workers concurrently ───────────────────────────────────────────
+    # All articles go into gather() at once. The semaphore controls how many
+    # actually hit the network at the same time (max 10). The rest wait
+    # in asyncio's queue without blocking the event loop.
+    try:
+        enriched_articles = await asyncio.gather(
+            *[_enrich_one(a) for a in articles],
+            return_exceptions=True
+        )
+
+        # Replace any Exception results with the original article (safe fallback).
+        final = []
+        for original, result in zip(articles, enriched_articles):
+            if isinstance(result, Exception):
+                logger.debug(
+                    "[IMAGE ENRICHER] Worker exception for %s: %s",
+                    str(original.url)[:60], result
+                )
+                final.append(original)           # Keep original if worker crashed
+            else:
+                final.append(result)
+
+        enriched_total = sum(
+            1 for a in final if a.image_url and a.image_url.startswith("http")
+        )
+        logger.info(
+            "✅ [IMAGE ENRICHER] Done — %d/%d articles now have images.",
+            enriched_total, len(final)
+        )
+        return final
+
+    except Exception as e:
+        # If the entire gather somehow fails, return the original list untouched.
+        logger.error("[IMAGE ENRICHER] Gather failed: %s — returning articles unchanged.", e)
+        return articles
+
+
 async def fetch_and_validate_category(category: str, aggregator) -> tuple:
     """
     Fetch and validate articles for a single category.
@@ -393,6 +538,7 @@ async def fetch_and_validate_category(category: str, aggregator) -> tuple:
     from app.utils.date_parser import normalize_article_date
     from app.utils.url_canonicalization import canonicalize_url
     from app.utils.redis_dedup import is_url_seen_or_mark
+    from app.models import Article   # Needed to reconstruct Pydantic model after date normalization
     
     try:
         logger.info("📌 Fetching %s...", category.upper())
@@ -477,12 +623,41 @@ async def fetch_and_validate_category(category: str, aggregator) -> tuple:
                 continue
 
             # Step 4: Normalize date to UTC ISO-8601.
-            article = normalize_article_date(article)
+            # IMPORTANT: normalize_article_date() always returns a plain dict
+            # (it calls model_dump() internally). We reconstruct the Pydantic
+            # Article right after so that enrich_missing_images_in_batch()
+            # (Phase 13, below) gets the .image_url attribute it needs.
+            normalized_dict = normalize_article_date(article)
+            try:
+                article = Article(**normalized_dict)
+            except Exception:
+                # If reconstruction fails for any reason, skip this article.
+                # The dict is malformed — better to drop it than crash.
+                invalid_count += 1
+                continue
 
-            # Step 5: Sanitize and clean the article fields.
-            clean_article = sanitize_article(article)
-            valid_articles.append(clean_article)
-        
+            # Step 5: Article is now a clean Pydantic object with a normalized date.
+            # We intentionally do NOT call sanitize_article() yet — that step
+            # runs AFTER image enrichment below.
+            valid_articles.append(article)
+
+        # ── PHASE 13: GLOBAL IMAGE ENRICHMENT ─────────────────────────────────
+        # This is the bottom of the funnel. Every article here has already:
+        #   ✓ Passed basic validation (title, URL, date exist)
+        #   ✓ Passed category relevance check
+        #   ✓ Passed Redis 48-hour deduplication (it is a NEW article)
+        #   ✓ Been date-normalized
+        # Articles are still Pydantic objects here — enrichment needs .image_url.
+        if valid_articles:
+            valid_articles = await enrich_missing_images_in_batch(valid_articles)
+
+        # ── SANITIZE (after enrichment) ────────────────────────────────────────
+        # Now that images are filled, convert each Pydantic Article to a clean
+        # dict for Appwrite storage. sanitize_article() strips unsafe chars,
+        # trims lengths, and returns the final dict payload.
+        valid_articles = [sanitize_article(a) for a in valid_articles]
+        # ──────────────────────────────────────────────────────────────────────
+
         logger.info("✓ %s: %d valid, %d invalid, %d irrelevant",
                     category.upper(), len(valid_articles), invalid_count, irrelevant_count)
         return (category, valid_articles, invalid_count, irrelevant_count, relevant_count)

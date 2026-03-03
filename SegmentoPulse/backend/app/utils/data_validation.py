@@ -268,158 +268,272 @@ def calculate_quality_score(article: Dict) -> int:
     return min(max(score, 0), 100)
 
 
+# ==============================================================================
+# MASTER CATEGORY TAXONOMY  (Phase 19 — Expanded Entity-Based Keywords)
+# ==============================================================================
+#
+# This dictionary is the SINGLE SOURCE OF TRUTH for category routing.
+# Every category has a rich list of keywords covering:
+#   • The topic itself            (e.g., "machine learning")
+#   • Major companies             (e.g., "openai", "anthropic")
+#   • Flagship products           (e.g., "chatgpt", "sagemaker")
+#   • Industry acronyms           (e.g., "llm", "etl", "gcp")
+#
+# ⚠️  IMPORTANT — word-boundary safety:
+#   Short acronyms like "ai", "bi", "aws" MUST live here — we protect them
+#   with \b regex word boundaries in COMPILED_CATEGORY_REGEX below.
+#   Do NOT add single-letter keywords; they can never be safe.
+#
+# NOTE: 'cloud-computing' is kept here because it is an active category in
+#   config.py, news_aggregator.py, and several providers. Removing it would
+#   break article routing for all generic cloud news. — Phase 19
+# ==============================================================================
+CATEGORY_KEYWORDS = {
+
+    # ── Artificial Intelligence ────────────────────────────────────────────────
+    'ai': [
+        'artificial intelligence', 'machine learning', 'deep learning',
+        'neural network', 'gpt', 'llm', 'chatgpt', 'generative ai',
+        'computer vision', 'nlp', 'natural language processing', 'transformer',
+        'openai', 'anthropic', 'sam altman', 'claude', 'gemini', 'mistral',
+        'llama', 'copilot', 'midjourney', 'stable diffusion', 'hugging face',
+        'rag', 'vector database', 'prompt engineering', 'agi', 'agentic ai',
+    ],
+
+    # ── Cloud — generic umbrella category (must stay: used in config.py) ──────
+    'cloud-computing': [
+        'cloud computing', 'cloud services', 'aws', 'azure', 'google cloud',
+        'gcp', 'salesforce', 'alibaba cloud', 'tencent cloud', 'huawei cloud',
+        'cloudflare', 'saas', 'paas', 'iaas', 'serverless', 'kubernetes',
+        'multi-cloud', 'hybrid cloud',
+    ],
+
+    # ── Cloud sub-categories (provider-specific) ───────────────────────────────
+    'cloud-aws': [
+        'aws', 'amazon web services', 's3', 'ec2', 'lambda', 'cloudfront',
+        'sagemaker', 'dynamodb', 'amazon bedrock', 'aws reinvent',
+        'fargate', 'aws graviton', 'elastic beanstalk',
+    ],
+    'cloud-azure': [
+        'azure', 'microsoft azure', 'azure devops', 'azure ml',
+        'azure openai', 'microsoft cloud', 'azure synapse', 'cosmos db',
+        'azure arc', 'microsoft entra',
+    ],
+    'cloud-gcp': [
+        'gcp', 'google cloud', 'bigquery', 'vertex ai', 'cloud run',
+        'dataflow', 'google kubernetes engine', 'gke', 'google spanner',
+        'anthos', 'cloud sql', 'gemini for google cloud',
+    ],
+    'cloud-alibaba': [
+        'alibaba cloud', 'aliyun', 'alicloud', 'polar db', 'maxcompute',
+        'elastic compute service', 'tongyi qianwen', 'qwen',
+    ],
+    'cloud-huawei': [
+        'huawei cloud', 'huaweicloud', 'pangu model',
+        'harmonyos', 'kunpeng', 'ascend ai',
+    ],
+    'cloud-digitalocean': [
+        'digitalocean', 'digital ocean', 'do droplet', 'digitalocean spaces',
+        'digitalocean app platform', 'managed kubernetes', 'cloudways',
+    ],
+    'cloud-oracle': [
+        'oracle cloud', 'oci', 'oracle database', 'oracle fusion',
+        'oracle cloud infrastructure', 'mysql heatwave', 'oracle apex',
+    ],
+    'cloud-ibm': [
+        'ibm cloud', 'ibm watson', 'red hat', 'openshift',
+        'ibm z', 'watsonx', 'ibm mainframe',
+    ],
+    'cloud-cloudflare': [
+        'cloudflare', 'cloudflare workers', 'cloudflare r2',
+        'cloudflare pages', 'zero trust',
+    ],
+
+    # ── Data Engineering ───────────────────────────────────────────────────────
+    'data-engineering': [
+        'data engineering', 'data pipeline', 'etl', 'elt', 'big data',
+        'apache spark', 'hadoop', 'kafka', 'airflow', 'data warehouse',
+        'snowflake', 'databricks', 'dbt', 'fivetran', 'apache iceberg',
+        'delta lake', 'data lakehouse',
+    ],
+
+    # ── Data Security ─────────────────────────────────────────────────────────
+    'data-security': [
+        'security', 'cybersecurity', 'data breach', 'hacking', 'vulnerability',
+        'encryption', 'malware', 'ransomware', 'firewall', 'zero trust',
+        'phishing', 'soc2', 'infosec', 'penetration testing',
+    ],
+
+    # ── Data Governance ───────────────────────────────────────────────────────
+    'data-governance': [
+        'data governance', 'compliance', 'regulation', 'audit', 'data policy',
+        'metadata management', 'data lineage', 'data stewardship',
+        'regulatory compliance',
+    ],
+
+    # ── Data Privacy ──────────────────────────────────────────────────────────
+    'data-privacy': [
+        'data privacy', 'gdpr', 'ccpa', 'user consent', 'personal data',
+        'pii', 'anonymization', 'data protection', 'privacy law',
+        'hipaa', 'cookie tracking',
+    ],
+
+    # ── Data Management ───────────────────────────────────────────────────────
+    'data-management': [
+        'data management', 'master data', 'mdm', 'data catalog',
+        'data quality', 'reference data', 'data lifecycle', 'data architecture',
+    ],
+
+    # ── Business Intelligence ─────────────────────────────────────────────────
+    'business-intelligence': [
+        'business intelligence', 'bi', 'analytics dashboard', 'tableau',
+        'power bi', 'looker', 'data reporting', 'kpi', 'quicksight', 'qlik',
+    ],
+
+    # ── Business Analytics ────────────────────────────────────────────────────
+    'business-analytics': [
+        'data analytics', 'data analysis', 'business insights', 'business metrics',
+        'data-driven', 'business analytics', 'predictive analytics', 'forecasting',
+    ],
+
+    # ── Customer Data Platform ────────────────────────────────────────────────
+    'customer-data-platform': [
+        'cdp', 'customer data platform', 'crm', 'customer experience',
+        'personalization engine', 'audience segmentation',
+        'segment.com', 'salesforce data cloud',
+    ],
+
+    # ── Data Centers ──────────────────────────────────────────────────────────
+    'data-centers': [
+        'data center', 'data centre', 'datacenter', 'server rack', 'colocation',
+        'edge computing', 'hyperscale', 'hpc', 'liquid cooling',
+        'data center cooling',
+    ],
+
+    # ── Publishing categories ─────────────────────────────────────────────────
+    'medium-article': [
+        'medium', 'article', 'blog', 'writing', 'publishing',
+        'content', 'story', 'author', 'blogging',
+    ],
+    'magazines': [
+        'technology', 'tech', 'innovation', 'digital', 'startup',
+        'software', 'hardware', 'gadget',
+    ],
+}
+
+
+# ==============================================================================
+# PRE-COMPILED REGEX ENGINE  (Phase 19 — Word-Boundary Patterns)
+# ==============================================================================
+#
+# Problem this solves:
+#   Old code: "ai" in text  →  matches "tr[ai]n", "ava[i]lable" — garbage hits.
+#   New code: \bai\b in text → only "AI" as a standalone word — clean hits.
+#
+# Why pre-compile?
+#   Building a regex from scratch takes CPU time. If we do it inside the
+#   validation function, it runs once per article × 22 categories = thousands of
+#   compilations per scheduler cycle. By compiling ONCE at import time and
+#   storing the result, all subsequent lookups are instant memory reads.
+#
+# How each pattern is built:
+#   For every keyword in a category we do:
+#       re.escape(keyword)   → safely escapes dots, plus signs, brackets etc.
+#       \b ... \b            → word boundaries so "aws" won't match "kawasaki"
+#   All keywords in one category are joined with | (OR), so a single
+#   re.search() call checks every keyword at once — maximum speed.
+#
+# Example — 'ai' category compiles to:
+#   \bartificial intelligence\b|\bmachine learning\b|\bgpt\b|\bllm\b|...
+# ==============================================================================
+def _build_category_regex(keywords: list) -> 're.Pattern':
+    """
+    Turn a list of keywords into one pre-compiled word-boundary OR pattern.
+
+    Example:
+        ['gpt', 'llm', 'openai']
+        → re.compile(r'\\bgpt\\b|\\bllm\\b|\\bopenai\\b', re.IGNORECASE)
+    """
+    parts = [r'\b' + re.escape(kw) + r'\b' for kw in keywords]
+    return re.compile('|'.join(parts), re.IGNORECASE)
+
+
+# This dict is built ONCE when the server starts.
+# Key   = category slug  (e.g. 'ai', 'cloud-aws')
+# Value = compiled regex (e.g. re.compile(r'\bgpt\b|\bllm\b|...'))
+COMPILED_CATEGORY_REGEX: dict = {
+    category: _build_category_regex(keywords)
+    for category, keywords in CATEGORY_KEYWORDS.items()
+}
+
+
 def is_relevant_to_category(article: Union[Dict, 'Article'], category: str) -> bool:
     """
-    Validate that article is relevant to the specified category
-    
-    HOTFIX: Now handles both Pydantic Article objects and dicts
-    
-    Prevents category pollution (e.g., "Apple pie" in Tech)
-    
-    Returns True only if article contains category-specific keywords
+    Check whether an article belongs to the given category.
+
+    Uses pre-compiled word-boundary regex patterns (built once at server start)
+    so that:
+      • Short acronyms like "ai", "bi", "aws" only match as full words.
+        "trail"  → does NOT match 'ai' anymore.
+        "kubernot" → does NOT match 'gcp' anymore.
+      • Multi-word phrases like "openai" or "sagemaker" are matched exactly.
+      • Unknown categories automatically pass (return True) so we don't
+        accidentally drop articles routed to categories we haven't mapped yet.
+
+    Scans: article title + description + URL path (all lowercased).
+
+    Returns:
+        True  — article is relevant (at least 1 keyword matches).
+        False — no keyword matched; article is rejected for this category.
     """
-    # HOTFIX: Convert to dict if needed
+    # ── Step 1: Convert to dict safely ────────────────────────────────────────
     if hasattr(article, 'model_dump'):
         article_dict = article.model_dump()
     elif hasattr(article, 'dict'):
         article_dict = article.dict()
     else:
         article_dict = article
-    
-    # Category keyword dictionaries
-    # Each category has a list of words we scan for in the article's title,
-    # description, AND URL path. If at least one word matches, the article passes.
-    CATEGORY_KEYWORDS = {
-        'ai': [
-            'ai', 'artificial intelligence', 'machine learning', 'deep learning',
-            'neural network', 'gpt', 'llm', 'chatgpt', 'generative ai',
-            'computer vision', 'nlp', 'natural language', 'transformer'
-        ],
-        'data-security': [
-            'security', 'cybersecurity', 'data breach', 'hacking', 'vulnerability',
-            'encryption', 'malware', 'ransomware', 'firewall', 'threat'
-        ],
-        'data-governance': [
-            'governance', 'compliance', 'regulation', 'audit', 'policy',
-            'data quality', 'metadata', 'lineage', 'stewardship'
-        ],
-        'data-privacy': [
-            'privacy', 'gdpr', 'ccpa', 'consent', 'personal data',
-            'pii', 'anonymization', 'data protection', 'privacy law'
-        ],
-        'data-engineering': [
-            'data engineering', 'pipeline', 'etl', 'big data', 'spark',
-            'hadoop', 'kafka', 'airflow', 'data warehouse', 'snowflake'
-        ],
-        'data-management': [
-            'data management', 'master data', 'mdm', 'data catalog',
-            'data quality', 'data lineage', 'data stewardship',
-            'data governance', 'data integration', 'reference data'
-        ],
-        'business-intelligence': [
-            'business intelligence', 'bi', 'analytics', 'dashboard',
-            'tableau', 'power bi', 'looker', 'reporting', 'kpi'
-        ],
-        'business-analytics': [
-            'analytics', 'analysis', 'insights', 'metrics', 'data-driven',
-            'business analytics', 'predictive', 'forecasting'
-        ],
-        'customer-data-platform': [
-            'cdp', 'customer data', 'customer platform', 'crm',
-            'customer experience', 'personalization', 'segmentation'
-        ],
-        'data-centers': [
-            'data center', 'data centre', 'datacenter', 'server', 'infrastructure',
-            'colocation', 'edge computing', 'hyperscale'
-        ],
-        'cloud-computing': [
-            'cloud', 'aws', 'azure', 'google cloud', 'gcp', 'salesforce',
-            'alibaba cloud', 'tencent cloud', 'huawei cloud', 'cloudflare',
-            'saas', 'paas', 'iaas', 'serverless', 'kubernetes'
-        ],
-        # ── Cloud sub-categories (each maps to a specific provider) ──────────
-        'cloud-aws': [
-            'aws', 'amazon web services', 's3', 'ec2', 'lambda',
-            'cloudfront', 'sagemaker', 'dynamodb', 'amazon'
-        ],
-        'cloud-azure': [
-            'azure', 'microsoft azure', 'azure devops', 'azure ml',
-            'azure openai', 'microsoft cloud'
-        ],
-        'cloud-gcp': [
-            'gcp', 'google cloud', 'bigquery', 'vertex ai',
-            'cloud run', 'dataflow', 'google cloud platform'
-        ],
-        'cloud-oracle': [
-            'oracle cloud', 'oci', 'oracle database', 'oracle fusion',
-            'oracle cloud infrastructure'
-        ],
-        'cloud-ibm': [
-            'ibm cloud', 'ibm watson', 'red hat', 'openshift', 'ibm z'
-        ],
-        'cloud-alibaba': [
-            'alibaba cloud', 'aliyun', 'alicloud'
-        ],
-        'cloud-digitalocean': [
-            'digitalocean', 'droplet', 'app platform'
-        ],
-        'cloud-huawei': [
-            'huawei cloud', 'huaweicloud'
-        ],
-        'cloud-cloudflare': [
-            'cloudflare', 'cloudflare workers', 'cloudflare r2',
-            'cloudflare pages', 'zero trust'
-        ],
-        # ── Content / publishing categories ───────────────────────────────────
-        'medium-article': [
-            'medium', 'article', 'blog', 'writing', 'publishing',
-            'content', 'story', 'author', 'blogging'
-        ],
-        'magazines': [
-            'technology', 'tech', 'innovation', 'digital', 'startup',
-            'software', 'hardware', 'gadget'
-        ]
-    }
-    
-    # Get keywords for this category
-    keywords = CATEGORY_KEYWORDS.get(category, [])
-    
-    if not keywords:
-        # Unknown category - allow (don't reject)
+
+    # ── Step 2: Look up the pre-compiled pattern for this category ────────────
+    pattern = COMPILED_CATEGORY_REGEX.get(category)
+
+    if pattern is None:
+        # Category not in our taxonomy — let it pass rather than silently drop.
         return True
-    
-    # Build the text we will search for keywords.
-    # We use title + description as the primary source.
-    # We also append the article's URL path because RSS feeds (especially Google News)
-    # often return empty descriptions. The URL itself usually tells you what the
-    # article is about — e.g. "/aws-launches-new-s3-feature" clearly contains 'aws' and 's3'.
-    # Hyphens and slashes are replaced with spaces so words can be matched individually.
-    title = (article_dict.get('title') or '').lower()
+
+    # ── Step 3: Build the search text ─────────────────────────────────────────
+    # We scan three sources:
+    #   • title       — the headline, most reliable signal
+    #   • description — body summary, adds context
+    #   • url_words   — URL path with hyphens → spaces.
+    #                   Catches articles with empty descriptions like Google RSS.
+    #                   e.g. "/aws-launches-sagemaker-feature" → "aws launches sagemaker feature"
+    title       = (article_dict.get('title')       or '').lower()
     description = (article_dict.get('description') or '').lower()
 
-    # Extract the URL path safely.
     raw_url = article_dict.get('url') or ''
     url_str = str(raw_url).lower()
     try:
         parsed_url = urlparse(url_str)
-        # Replace hyphens and slashes with spaces so
-        # "/aws-new-s3-launch" becomes "aws new s3 launch".
+        # Replace hyphens and slashes with spaces so URL path words
+        # are treated as individual tokens by the word-boundary regex.
         url_words = parsed_url.path.replace('-', ' ').replace('/', ' ')
     except Exception:
         url_words = ''
 
-    text = f"{title} {description} {url_words}"
-    
-    # Count keyword matches
-    matches = sum(1 for keyword in keywords if keyword.lower() in text)
-    
-    # Require at least 1 keyword match (lenient for now)
-    # Can increase to 2+ for stricter filtering
-    if matches >= 1:
+    search_text = f"{title} {description} {url_words}"
+
+    # ── Step 4: Run the compiled regex ────────────────────────────────────────
+    # re.search() returns a Match object on the FIRST hit, or None.
+    # The pattern already has re.IGNORECASE compiled in — no need to lower() again.
+    if pattern.search(search_text):
         return True
-    
-    # Log rejection for monitoring
-    print(f"🚫 Rejected '{article_dict.get('title', 'Unknown')[:50]}' from {category} (0 keyword matches)")
+
+    # No match — log the rejection for monitoring.
+    print(
+        f"🚫 Rejected '{article_dict.get('title', 'Unknown')[:50]}' "
+        f"from {category} (0 keyword matches)"
+    )
     return False
 
 
