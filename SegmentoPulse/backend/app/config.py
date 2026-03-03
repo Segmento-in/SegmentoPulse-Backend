@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     GNEWS_API_KEY: str = ""
     NEWSAPI_API_KEY: str = ""
     NEWSDATA_API_KEY: str = ""
+    # Phase 5: TheNewsAPI.com — 100 req/day free tier, position 4 in PAID_CHAIN
+    THENEWSAPI_API_KEY: str = ""
+    # Phase 8: WorldNewsAI.com — point-based quota, position 5 in PAID_CHAIN
+    WORLDNEWS_API_KEY: str = ""
+    # Phase 10: Webz.io — 1,000 calls/month free tier, position 6 in PAID_CHAIN
+    WEBZ_API_KEY: str = ""
     
     # Provider priority (will try in order until successful)
     NEWS_PROVIDER_PRIORITY: List[str] = ["gnews", "newsapi", "newsdata", "google_rss"]

@@ -79,8 +79,24 @@ class ProviderCircuitBreaker:
         self.circuit_open_time: Dict[str, float] = {}
         self.half_open_attempts: Dict[str, int] = defaultdict(int)
 
-        # Known providers — used by the boot-time Redis restore
-        self._known_providers = ["gnews", "newsapi", "newsdata", "google_rss", "medium", "official_cloud"]
+        # Known providers — used by the boot-time Redis restore.
+        # IMPORTANT: Every provider registered in news_aggregator.py MUST be
+        # listed here. If a provider is missing, a circuit that was OPEN before
+        # a server restart will not be restored — the Space will hammer a broken
+        # API on every restart until it fails 3 more times to re-open.
+        #
+        # Phases 1-2 (legacy):      gnews, newsapi, newsdata, google_rss, medium, official_cloud
+        # Phases 3-11 (new modules): hacker_news, direct_rss, thenewsapi, inshorts,
+        #                            saurav_static, worldnewsai, openrss, webz, wikinews
+        self._known_providers = [
+            # ── Legacy providers (Phases 1-2) ────────────────────────────────
+            "gnews", "newsapi", "newsdata",
+            "google_rss", "medium", "official_cloud",
+            # ── New modular providers (Phases 3-11) ───────────────────────────
+            "hacker_news", "direct_rss", "thenewsapi",
+            "inshorts", "saurav_static", "worldnewsai",
+            "openrss", "webz", "wikinews",
+        ]
 
         logger.info("=" * 70)
         logger.info("⚡ [CIRCUIT BREAKER] Provider protection initialized")
