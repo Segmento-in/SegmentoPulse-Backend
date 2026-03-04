@@ -52,6 +52,11 @@ class GNewsProvider(NewsProvider):
         self.base_url = "https://gnews.io/api/v4"
         self.daily_limit = 100
         
+        # ── REFERENCE BACKUP (no longer used at runtime — Phase 21) ─────────
+        # These were the old static query strings for GNews.
+        # The live query is now built dynamically by build_dynamic_query().
+        # To revert, replace the dynamic call in fetch_news() with:
+        #     query = self.category_map.get(category, category)
         # Category mapping
         self.category_map = {
             'ai': 'artificial intelligence machine learning',
@@ -94,7 +99,13 @@ class GNewsProvider(NewsProvider):
             return []
 
         try:
-            query = self.category_map.get(category, category)
+            # ── Phase 21: Dynamic query builder ─────────────────────────────
+            # build_dynamic_query returns anchors + current hour's rotating chunk
+            # formatted as space-separated words for GNews's search syntax.
+            # Example at hour 7 for 'ai':
+            #   'artificial intelligence machine learning deep learning neural network gpt llm chatgpt'
+            from app.utils.query_builder import build_dynamic_query
+            query = build_dynamic_query(category, api_type="gnews")
             url = f"{self.base_url}/search"
 
             # Simple, plan-compatible request — no date window.
@@ -176,49 +187,68 @@ class NewsAPIProvider(NewsProvider):
         super().__init__(api_key)
         self.base_url = "https://newsapi.org/v2"
         self.daily_limit = 100
-        
-        # Category keywords
+
+        # ── REFERENCE BACKUP (no longer used at runtime) ───────────────────────
+        # These were the old hardcoded query strings. They are kept here only as
+        # a human-readable reference of what we used to send.
+        # The live query is now built dynamically by build_dynamic_query() below,
+        # which applies the full Phase 19 taxonomy with UTC-clock round-robin rotation.
+        # To revert to static queries, replace the dynamic call with:
+        #     query = self.category_keywords.get(category, category)
         self.category_keywords = {
-            'ai': 'artificial intelligence OR "machine learning" OR "deep learning"',
-            'data-security': '"data security" OR cybersecurity OR "data breach"',
-            'data-governance': '"data governance" OR "data management" OR compliance',
-            'data-privacy': '"data privacy" OR GDPR OR "privacy regulation"',
-            'data-engineering': '"data engineering" OR "data pipeline" OR "big data"',
-            'data-management': '"data management" OR "master data" OR MDM OR "data catalog" OR "data quality" OR "data lineage"',
-            'business-intelligence': '"business intelligence" OR "BI tools"',
-            'business-analytics': '"business analytics" OR analytics',
-            'customer-data-platform': '"customer data platform" OR CDP',
-            'data-centers': '"data centers" OR "data centre"',
-            'cloud-computing': '"cloud computing" OR AWS OR Azure OR "Google Cloud" OR Salesforce OR "Alibaba Cloud" OR "Tencent Cloud" OR "Huawei Cloud" OR Cloudflare',
-            'cloud-aws': 'AWS OR "Amazon Web Services" OR "Amazon S3" OR EC2 OR Lambda OR CloudFront OR SageMaker',
-            'cloud-azure': 'Azure OR "Microsoft Azure" OR "Azure DevOps" OR "Azure ML" OR "Azure OpenAI"',
-            'cloud-gcp': 'GCP OR "Google Cloud" OR BigQuery OR "Vertex AI" OR "Cloud Run" OR Dataflow',
-            'cloud-oracle': '"Oracle Cloud" OR OCI OR "Oracle Database" OR "Oracle Fusion"',
-            'cloud-ibm': '"IBM Cloud" OR "IBM Watson" OR "Red Hat" OR OpenShift OR "IBM Z"',
-            'cloud-alibaba': '"Alibaba Cloud" OR Aliyun OR AliCloud',
-            'cloud-digitalocean': 'DigitalOcean OR Droplet OR "App Platform"',
-            'cloud-huawei': '"Huawei Cloud" OR HuaweiCloud',
-            'cloud-cloudflare': 'Cloudflare OR "Cloudflare Workers" OR "Cloudflare R2" OR "Zero Trust"',
-            'medium-article': 'Medium OR "Medium article" OR "Medium blog" OR "Medium publishing"',
-            'magazines': 'technology',
-            'data-laws': '"data privacy law" OR GDPR OR CCPA OR "EU AI Act" OR "data protection act"',
+            'ai':                   '"artificial intelligence" OR "machine learning" OR "deep learning"',
+            'data-security':        '"data security" OR cybersecurity OR "data breach"',
+            'data-governance':      '"data governance" OR compliance',
+            'data-privacy':         '"data privacy" OR GDPR OR "privacy regulation"',
+            'data-engineering':     '"data engineering" OR "data pipeline" OR "big data"',
+            'data-management':      '"data management" OR MDM OR "data catalog"',
+            'business-intelligence':'business intelligence OR "BI tools"',
+            'business-analytics':   '"business analytics" OR analytics',
+            'customer-data-platform':'"customer data platform" OR CDP',
+            'data-centers':         '"data centers" OR "data centre"',
+            'cloud-computing':      '"cloud computing" OR AWS OR Azure OR "Google Cloud"',
+            'cloud-aws':            'AWS OR "Amazon Web Services" OR SageMaker',
+            'cloud-azure':          'Azure OR "Microsoft Azure" OR "Azure OpenAI"',
+            'cloud-gcp':            'GCP OR "Google Cloud" OR BigQuery OR "Vertex AI"',
+            'cloud-oracle':         '"Oracle Cloud" OR OCI OR "Oracle Database"',
+            'cloud-ibm':            '"IBM Cloud" OR "IBM Watson" OR OpenShift',
+            'cloud-alibaba':        '"Alibaba Cloud" OR Aliyun',
+            'cloud-digitalocean':   'DigitalOcean',
+            'cloud-huawei':         '"Huawei Cloud"',
+            'cloud-cloudflare':     'Cloudflare OR "Zero Trust"',
+            'medium-article':       'Medium OR "Medium article" OR "Medium blog"',
+            'magazines':            'technology',
+            'data-laws':            '"data privacy law" OR GDPR OR CCPA OR "EU AI Act"',
         }
-    
+
     async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:
         """
         Fetch news from NewsAPI.
 
-        Why no 'from' date filter here?
+        Phase 20 upgrade: The query string is now built dynamically by
+        build_dynamic_query() from app.utils.query_builder.
+        It uses the full Phase 19 expanded taxonomy with the Anchor + Round-Robin
+        rotation, driven by the current UTC hour. This means:
+          • Every hour, we ask for a DIFFERENT subset of our keyword taxonomy.
+          • The first 3 keywords (anchors) are ALWAYS included — no breaking news missed.
+          • The URL stays well under the ~500-char limit at all times.
+          • Zero Redis, zero state — just the server clock.
+
+        Why no 'from' date filter?
         Some NewsAPI plan tiers restrict date filtering and return status='error'
-        when a date param is included. Removing the filter makes the request
-        plan-agnostic. Our data_validation.py freshness gate handles date
-        filtering downstream.
+        when a date param is used. Our data_validation.py freshness gate handles
+        date filtering downstream.
         """
         if not self.api_key:
             return []
 
         try:
-            query = self.category_keywords.get(category, category)
+            # ── Phase 20: Dynamic query builder ─────────────────────────────────
+            # build_dynamic_query selects anchors + current hour's rotating chunk
+            # from the full CATEGORY_KEYWORDS taxonomy and formats it for NewsAPI's
+            # boolean OR syntax (e.g. '"openai" OR "machine learning" OR anthropic').
+            from app.utils.query_builder import build_dynamic_query
+            query = build_dynamic_query(category, api_type="newsapi")
             url = f"{self.base_url}/everything"
 
             # Simple, plan-compatible request — no date window.
@@ -295,6 +325,11 @@ class NewsDataProvider(NewsProvider):
         self.base_url = "https://newsdata.io/api/1"
         self.daily_limit = 200
         
+        # ── REFERENCE BACKUP (no longer used at runtime — Phase 21) ─────────
+        # These were the old static comma-separated query strings for NewsData.
+        # The live query is now built dynamically by build_dynamic_query().
+        # To revert, replace the dynamic call in fetch_news() with:
+        #     query = self.category_keywords.get(category, category)
         # Category keywords
         self.category_keywords = {
             'ai': 'artificial intelligence,machine learning',
@@ -328,7 +363,13 @@ class NewsDataProvider(NewsProvider):
             return []
         
         try:
-            query = self.category_keywords.get(category, category)
+            # ── Phase 21: Dynamic query builder ─────────────────────────────
+            # build_dynamic_query returns anchors + current hour's rotating chunk
+            # formatted as comma-separated terms for NewsData.io's search syntax.
+            # Example at hour 7 for 'ai':
+            #   'artificial intelligence,machine learning,deep learning,neural network,gpt,llm,chatgpt'
+            from app.utils.query_builder import build_dynamic_query
+            query = build_dynamic_query(category, api_type="newsdata")
             url = f"{self.base_url}/news"
 
             # NewsData has a built-in 'timeframe' parameter (in hours).

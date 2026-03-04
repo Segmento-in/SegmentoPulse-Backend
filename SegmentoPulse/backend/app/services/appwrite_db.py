@@ -68,6 +68,19 @@ class AppwriteDatabase:
         self.client = None
         self.databases = None
         self.storage = None
+
+        # ── Phase 22: Global write concurrency guard ──────────────────────────
+        # This semaphore is a class-level attribute — shared across EVERY call
+        # to save_articles(), including concurrent calls from different categories.
+        #
+        # Why 10? Appwrite's free/starter tier handles ~60 writes/min comfortably.
+        # 10 concurrent writes means we process 150 articles in 15 rounds of 10,
+        # finishing in a few seconds while staying well inside Appwrite's limits.
+        #
+        # Without this: 150 simultaneous POST requests → Appwrite HTTP 429
+        #               → articles silently dropped (data loss during news events).
+        # With this:    10 at a time → zero 429s → zero silent data loss.
+        self._write_semaphore = asyncio.Semaphore(10)
         
         if APPWRITE_AVAILABLE and settings.APPWRITE_PROJECT_ID:
             self._initialize()
@@ -470,10 +483,24 @@ class AppwriteDatabase:
                 logger.error(f"❌ General Error: {str(e)} | URL: {url[:50]}...", exc_info=True)
                 return ('error', str(e))
         
-        # PARALLEL WRITES: Create tasks for all articles
-        save_tasks = [save_single_article(article) for article in articles]
-        
-        # Execute all writes concurrently!
+        # PHASE 22: Concurrency-limited parallel writes
+        #
+        # The _safe_save wrapper acquires self._write_semaphore before calling
+        # save_single_article. Because the semaphore is a CLASS-LEVEL attribute
+        # (set in __init__), it is shared across all concurrent save_articles()
+        # calls — even if 5 categories are saving at the same time, the total
+        # number of live Appwrite write requests is always capped at 10.
+        #
+        # Think of it as a turnstile: no matter how many people push at once,
+        # only 10 can walk through at the same time.
+        async def _safe_save(article):
+            async with self._write_semaphore:
+                return await save_single_article(article)
+
+        save_tasks = [_safe_save(article) for article in articles]
+
+        # asyncio.gather fires all tasks but the semaphore inside each one
+        # ensures at most 10 actually hit Appwrite at the same time.
         results = await asyncio.gather(*save_tasks, return_exceptions=True)
         
         # Count results

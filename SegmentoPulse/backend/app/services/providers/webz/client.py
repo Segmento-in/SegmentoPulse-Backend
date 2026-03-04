@@ -103,10 +103,13 @@ ARTICLES_PER_REQUEST = 10
 # Matches Phase 8's WorldNewsAI approach for consistency.
 DESCRIPTION_MAX_CHARS = 200
 
+# ── REFERENCE BACKUP (no longer used at runtime — Phase 22) ─────────────────
+# The old, hardcoded keyword phrases for Webz's free-text search.
+# The live query is now built dynamically by build_dynamic_query() below,
+# applying the full Phase 19 taxonomy with UTC-clock round-robin rotation.
+# To revert, replace the dynamic call in fetch_news() with:
+#     search_query = CATEGORY_QUERY_MAP.get(category, f"technology {category}")
 # Category → search query translation.
-# Webz uses free-text query strings (like Google search), so we convert
-# our internal category slugs into descriptive keyword phrases that maximise
-# the quality of results from Webz's index.
 CATEGORY_QUERY_MAP = {
     'ai':                      'artificial intelligence machine learning',
     'data-security':           'data security cybersecurity breach hacking',
@@ -219,8 +222,16 @@ class WebzProvider(NewsProvider):
             self.mark_rate_limited()
             return []
 
-        # Translate our internal category slug into a Webz-friendly search phrase.
-        search_query = CATEGORY_QUERY_MAP.get(category, f"technology {category}")
+        # ── Phase 22: Dynamic query builder (Gate 1 alignment) ───────────────
+        # build_dynamic_query uses the full Phase 19 taxonomy with the
+        # Anchor + Round-Robin strategy: 3 anchor terms always included +
+        # 4 rotating niche terms, changed by the UTC hour.
+        #
+        # api_type="gnews" → space-separated (e.g. 'openai anthropic llm datbricks')
+        # Webz uses free-text search (like Google), which naturally understands
+        # space-separated terms — matching how CATEGORY_QUERY_MAP was formatted.
+        from app.utils.query_builder import build_dynamic_query
+        search_query = build_dynamic_query(category, api_type="gnews")
 
         params = {
             "token":    self.api_key,
