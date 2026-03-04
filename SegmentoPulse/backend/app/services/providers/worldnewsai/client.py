@@ -79,9 +79,12 @@ ARTICLES_PER_REQUEST = 10
 # and database bloat. Matches the 200-char limit used by our RSS parser.
 DESCRIPTION_MAX_CHARS = 200
 
-# Category → search text mapping.
-# WorldNewsAI takes free-text search queries, not categories.
-# We translate our internal category slug into a descriptive keyword phrase.
+# ── REFERENCE BACKUP (no longer used at runtime — Phase 22) ─────────────────
+# The old, hardcoded keyword phrases for WorldNewsAI's free-text search.
+# The live query is now built dynamically by build_dynamic_query() below,
+# applying the full Phase 19 taxonomy with UTC-clock round-robin rotation.
+# To revert, replace the dynamic call in fetch_news() with:
+#     search_text = CATEGORY_QUERY_MAP.get(category, "technology news")
 CATEGORY_QUERY_MAP = {
     'ai':                      'artificial intelligence machine learning',
     'data-security':           'data security cybersecurity breach',
@@ -173,7 +176,16 @@ class WorldNewsAIProvider(NewsProvider):
             self.mark_rate_limited()
             return []
 
-        search_text = CATEGORY_QUERY_MAP.get(category, "technology news")
+        # ── Phase 22: Dynamic query builder (Gate 1 alignment) ───────────────
+        # build_dynamic_query uses the full Phase 19 taxonomy with the
+        # Anchor + Round-Robin strategy, selecting 3 anchor terms that never
+        # change + 4 rotating niche terms driven by the current UTC hour.
+        #
+        # api_type="gnews" → space-separated format (e.g. 'openai anthropic llm')
+        # WorldNewsAI's free-text search engine understands plain space-separated
+        # words natively — this matches how CATEGORY_QUERY_MAP was already formatted.
+        from app.utils.query_builder import build_dynamic_query
+        search_text = build_dynamic_query(category, api_type="gnews")
 
         params = {
             "text":     search_text,
