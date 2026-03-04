@@ -20,9 +20,12 @@ from app.config import settings
 # Phase 13: Global image enrichment — fills missing og:image across ALL providers
 from app.services.utils.image_enricher import extract_top_image
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Phase 23: Upgraded to the custom ANSI-aligned logger.
+# get_logger() wraps the standard logging.getLogger() with our AlignedColorFormatter.
+# The output format is: timestamp | LEVEL | module-name | message
+# This makes async logs from 22 concurrent categories scannable by human eyes.
+from app.utils.custom_logger import get_logger, TAG_START, TAG_GATE, TAG_ENRICH, TAG_DB, TAG_ERROR
+logger = get_logger(__name__)
 
 # Initialize scheduler
 scheduler = AsyncIOScheduler()
@@ -541,7 +544,7 @@ async def fetch_and_validate_category(category: str, aggregator) -> tuple:
     from app.models import Article   # Needed to reconstruct Pydantic model after date normalization
     
     try:
-        logger.info("📌 Fetching %s...", category.upper())
+        logger.info("%s Fetching category [%s]...", TAG_START, category.upper())
         
         # Ask the aggregator for all articles from all sources for this category.
         # fetch_by_category (Phase 5) internally runs:
@@ -658,15 +661,15 @@ async def fetch_and_validate_category(category: str, aggregator) -> tuple:
         valid_articles = [sanitize_article(a) for a in valid_articles]
         # ──────────────────────────────────────────────────────────────────────
 
-        logger.info("✓ %s: %d valid, %d invalid, %d irrelevant",
-                    category.upper(), len(valid_articles), invalid_count, irrelevant_count)
+        logger.info("%s [%s] Valid: %d | Invalid: %d | Irrelevant: %d | Time: see APScheduler",
+                    TAG_GATE, category.upper(), len(valid_articles), invalid_count, irrelevant_count)
         return (category, valid_articles, invalid_count, irrelevant_count, relevant_count)
         
     except asyncio.TimeoutError:
-        logger.error("⏱️  Timeout fetching %s (>30s)", category)
+        logger.error("%s Timeout fetching [%s] (>30s)", TAG_ERROR, category)
         return (category, [], 0, 0)
     except Exception as e:
-        logger.exception("❌ Error fetching %s", category)
+        logger.exception("%s Error fetching [%s]", TAG_ERROR, category)
         return (category, [], 0, 0)
 
 

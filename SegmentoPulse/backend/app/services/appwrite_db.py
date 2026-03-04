@@ -30,9 +30,11 @@ from app.models import Article
 from app.config import settings
 import logging
 
-# Configure logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Phase 23: Upgraded to the custom ANSI-aligned logger.
+# Every Appwrite save/error line will now appear under the [💾 DB] column
+# in the terminal, making it trivial to spot database issues at a glance.
+from app.utils.custom_logger import get_logger, TAG_DB, TAG_ERROR
+logger = get_logger(__name__)
 
 
 class TablesDBWrapper:
@@ -476,11 +478,13 @@ class AppwriteDatabase:
                 if 'document_already_exists' in str(e).lower() or 'unique' in str(e).lower():
                     return ('duplicate', None)
                 else:
-                    logger.error(f"❌ Appwrite Write Error: {str(e)} | URL: {url[:50]}...")
+                    logger.error("%s Appwrite write failed: %s | URL: %s...",
+                                 TAG_ERROR, str(e), url[:60])
                     return ('error', str(e))
                     
             except Exception as e:
-                logger.error(f"❌ General Error: {str(e)} | URL: {url[:50]}...", exc_info=True)
+                logger.error("%s Unexpected error during save: %s | URL: %s...",
+                              TAG_ERROR, str(e), url[:60])
                 return ('error', str(e))
         
         # PHASE 22: Concurrency-limited parallel writes
@@ -524,7 +528,10 @@ class AppwriteDatabase:
                 error_count += 1
         
         if saved_count > 0 or duplicate_count > 0 or error_count > 0:
-            logger.info(f"[WRITE] Parallel write: {saved_count} saved, {duplicate_count} duplicates, {error_count} errors")
+            logger.info(
+                "%s Saved: %d | Duplicates: %d | Errors: %d",
+                TAG_DB, saved_count, duplicate_count, error_count
+            )
         
         return saved_count, duplicate_count, error_count, saved_documents
     
