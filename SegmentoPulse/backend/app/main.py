@@ -1,8 +1,24 @@
 import asyncio
 import sys
+import logging
 from fastapi import FastAPI
 import warnings
 from fastapi.middleware.cors import CORSMiddleware
+from app.utils.custom_logger import AlignedColorFormatter
+
+# ── Phase 23: Root Logger Configuration ──────────────────────────────────────
+# Configure the ROOT logger before FastAPI and Uvicorn initialize.
+# Uvicorn resets loggers when it starts, so by configuring root early and
+# letting all other loggers propagate up to it, we ensure every log line
+# (including Uvicorn's access logs) uses our strict AlignedColorFormatter
+# and streams to stderr (for Hugging Face visibility).
+root_logger = logging.getLogger()
+if not root_logger.handlers:
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(AlignedColorFormatter())
+    root_logger.addHandler(handler)
+root_logger.setLevel(logging.INFO)
+
 
 # Windows-specific fix for Playwright + asyncio subprocesses
 if sys.platform == 'win32':
