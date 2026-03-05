@@ -137,47 +137,38 @@ class AlignedColorFormatter(logging.Formatter):
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Get a logger that uses the AlignedColorFormatter.
+    Get a logger that flows into the root logger configured in main.py.
 
     How to use this in any module:
         from app.utils.custom_logger import get_logger
         logger = get_logger(__name__)
 
-    This replaces the old:
-        import logging
-        logger = logging.getLogger(__name__)
+    Why we use propagate=True here (and NOT add our own handler):
+        Uvicorn calls logging.config.dictConfig() at startup, which can
+        silently orphan any handlers we attach to individual module loggers.
+        Instead, we configure ONE root handler in main.py (before uvicorn
+        starts), and let every module logger propagate its messages up to it.
+        This is the standard production pattern for FastAPI + uvicorn.
 
-    Why this is safe:
-        Python's logging module is a global registry. Calling get_logger()
-        for the same `name` twice returns the same Logger object — no
-        duplicate handlers are added because we check first.
+    Why we do NOT call addHandler() here:
+        If a module logger has its own handler AND propagate=True, every
+        log call would print TWICE — once from the module handler and once
+        from the root handler. No handlers here = no duplicates.
 
     Args:
         name: Normally pass __name__ (the module's full dotted path).
-              This becomes Column 3 in the log output.
 
     Returns:
         A configured Logger instance ready to use.
     """
     log = logging.getLogger(name)
 
-    # Only add our handler if none exists yet.
-    # This prevents duplicate output if get_logger is called multiple times
-    # for the same module (e.g., on server reload).
-    if not log.handlers:
-        # ── Why sys.stderr and not sys.stdout? ────────────────────────────────
-        # Hugging Face Spaces (Docker containers) capture sys.stderr for the
-        # terminal log viewer, not sys.stdout. Python's logging.basicConfig also
-        # defaults to stderr. Switching to stdout broke log visibility on HF.
-        # PYTHONUNBUFFERED=1 (set in HF Secrets) ensures each line appears
-        # immediately without waiting for the buffer to fill.
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(AlignedColorFormatter())
-        log.addHandler(handler)
-        log.propagate = False  # Stop double-printing via the root logger
-
-
-    # Set to DEBUG so all levels pass through; the root logger's level still
-    # applies above us. Callers can override: logger.setLevel(logging.WARNING).
+    # Set to DEBUG so all levels pass through to the root logger.
+    # The root logger's level and handler decide what is actually printed.
     log.setLevel(logging.DEBUG)
+
+    # Propagate to root: root handler (set up in main.py) does the printing.
+    # DO NOT add a handler here — that would cause duplicate log lines.
+    log.propagate = True
+
     return log
