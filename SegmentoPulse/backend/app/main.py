@@ -42,7 +42,7 @@ except ImportError:
 # Suppress specific Appwrite deprecation (tablesDB.create_row is not yet standard in Py SDK)
 # Catch 'create_document', 'list_documents', etc.
 warnings.filterwarnings("ignore", message=".*Call to deprecated function.*")
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain_groq")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Import routes AFTER warnings config
 from app.routes import news, search, analytics, subscription, admin, audio
@@ -171,7 +171,7 @@ async def root():
     # ── Redis health (lightweight — just check circuit breaker import) ────────
     redis_ok = False
     try:
-        from app.services.circuit_breaker import CircuitBreakerManager
+        from app.services.circuit_breaker import ProviderCircuitBreaker
         redis_ok = True   # If the import works and breaker is set up, Redis is configured
     except Exception:
         redis_ok = False

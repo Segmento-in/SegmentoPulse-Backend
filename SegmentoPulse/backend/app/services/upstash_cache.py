@@ -69,6 +69,16 @@ class UpstashCache:
             'errors': 0
         }
         
+        if not self.enabled:
+            logger.info("ℹ️  Upstash cache disabled (ENABLE_UPSTASH_CACHE=False)")
+        else:
+            logger.info("=" * 70)
+            logger.info("🚀 [UPSTASH] Redis cache initialized")
+            logger.info(f"   URL: {rest_url}")
+            logger.info(f"   Default TTL: {default_ttl}s")
+            logger.info(f"   Free Tier: 256 MB data, 50 GB/month bandwidth")
+            logger.info("=" * 70)
+            
     def _get_client(self) -> httpx.AsyncClient:
         """Lazy initialization of httpx client to avoid asyncio loop issues on Windows"""
         if not hasattr(self, '_client') or self._client is None:
@@ -80,24 +90,6 @@ class UpstashCache:
                 }
             )
         return self._client
-        
-        # Stats tracking
-        self.stats = {
-            'hits': 0,
-            'misses': 0,
-            'sets': 0,
-            'errors': 0
-        }
-        
-        if not self.enabled:
-            logger.info("ℹ️  Upstash cache disabled (ENABLE_UPSTASH_CACHE=False)")
-        else:
-            logger.info("=" * 70)
-            logger.info("🚀 [UPSTASH] Redis cache initialized")
-            logger.info(f"   URL: {rest_url}")
-            logger.info(f"   Default TTL: {default_ttl}s")
-            logger.info(f"   Free Tier: 256 MB data, 50 GB/month bandwidth")
-            logger.info("=" * 70)
     
     async def _execute_command(self, command: list) -> Optional[Any]:
         """
