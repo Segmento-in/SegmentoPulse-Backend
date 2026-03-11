@@ -106,13 +106,21 @@ async def fetch_all_news():
     # respect the live quota counts and circuit-breaker state from the
     # adaptive jobs that may already be running.
     shared_aggregator = _get_shared_aggregator()
+    
+    # Bounded concurrency: fetch a maximum of 3 categories simultaneously 
+    # to prevent Hugging Face Space network / DNS overload (503 errors).
+    semaphore = asyncio.Semaphore(3)
+    
+    async def fetch_with_semaphore(category):
+        async with semaphore:
+            return await fetch_and_validate_category(category, shared_aggregator)
+
     fetch_tasks = []
     for category in CATEGORIES:
-        task = fetch_and_validate_category(category, shared_aggregator)
-        fetch_tasks.append(task)
+        fetch_tasks.append(fetch_with_semaphore(category))
     
-    # Execute all fetches concurrently with error isolation
-    logger.info("⚡ Launching %d parallel fetch tasks...", len(CATEGORIES))
+    # Execute all fetches concurrently with error isolation and bounded concurrency
+    logger.info("⚡ Launching %d fetch tasks (max 3 concurrently)...", len(CATEGORIES))
     results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
     
     # Process results
