@@ -98,6 +98,14 @@ class InshortsProvider(NewsProvider):
         # all seeing an empty cache and all fetching at the same time.
         self._lock = asyncio.Lock()
 
+        # ── HF Spaces DNS-offline guard ───────────────────────────────────────
+        # Inshorts community API is blocked at the DNS layer on Hugging Face
+        # Spaces (ConnectError: [Errno -3] Temporary failure in name resolution).
+        # After the first hard DNS failure, we flip this flag and skip all
+        # subsequent calls so we don't spam the logs with full tracebacks on
+        # every scheduler tick.
+        self._permanently_unavailable: bool = False
+
     # ─────────────────────────────────────────────────────────────────────────
     # MAIN ENTRY POINT — called by the aggregator's FREE PARALLEL RUN
     # ─────────────────────────────────────────────────────────────────────────
@@ -117,6 +125,10 @@ class InshortsProvider(NewsProvider):
         """
         # ── Phase 17: Cache check (OUTER) ─────────────────────────────────────
         CACHE_TTL_SECONDS = 2700   # 45 minutes
+
+        # ── HF Spaces / DNS offline guard ─────────────────────────────────────
+        if self._permanently_unavailable:
+            return []  # Silent fast-path — no log spam
 
         if time.time() - self._cache_time < CACHE_TTL_SECONDS and self._cached_articles:
             logger.debug(
@@ -190,6 +202,21 @@ class InshortsProvider(NewsProvider):
                     self._cache_time = time.time()
                     return all_articles
 
+            except httpx.ConnectError as e:
+                err_str = str(e)
+                if 'name resolution' in err_str or 'Errno -3' in err_str or 'Errno -2' in err_str:
+                    # DNS failure — endpoint is unreachable in this environment
+                    # (e.g. Hugging Face Spaces network sandbox).
+                    # Flip the dead flag so we skip silently next time.
+                    self._permanently_unavailable = True
+                    logger.warning(
+                        "[Inshorts] DNS resolution failed — endpoint appears unreachable "
+                        "in this environment. Disabling Inshorts for the lifetime of this "
+                        "process to avoid log spam."
+                    )
+                else:
+                    logger.warning("[Inshorts] Connection error: %s", e)
+                return []
             except httpx.TimeoutException:
                 logger.warning("[Inshorts] Request timed out — endpoint may be slow.")
                 return []

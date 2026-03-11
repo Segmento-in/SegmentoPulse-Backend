@@ -627,17 +627,23 @@ class OfficialCloudProvider(NewsProvider):
         self.daily_limit = 0
         
         # Strict mapping: Category -> RSS URL
+        # NOTE: URLs verified/updated 2026-03-11:
+        #   IBM:         /blog/rss returns 301 → dead. Use developer.ibm.com blog feed.
+        #   Alibaba:     /blog/feed returns 302 → 404. Use English partner blog.
+        #   DigitalOcean: /blog/rss.xml returns 404. Use the community tutorials RSS.
+        #   Oracle:      /cloud-infrastructure/rss returns 301 → 403. Use /feed path.
+        #   Huawei:      blog.huawei.com HTML page fetched 0 — use newsroom atom feed.
         self.provider_map = {
             'cloud-aws': 'https://aws.amazon.com/blogs/aws/feed/',
             'cloud-azure': 'https://azure.microsoft.com/en-us/blog/feed/',
-            'cloud-google': 'https://cloudblog.withgoogle.com/rss/', # Legacy mapping if needed
+            'cloud-google': 'https://cloudblog.withgoogle.com/rss/',  # Legacy mapping
             'cloud-gcp': 'https://cloudblog.withgoogle.com/rss/',
-            'cloud-oracle': 'https://blogs.oracle.com/cloud-infrastructure/rss',
-            'cloud-ibm': 'https://www.ibm.com/blog/rss',
-            'cloud-alibaba': 'https://www.alibabacloud.com/blog/feed',
-            'cloud-digitalocean': 'https://www.digitalocean.com/blog/rss.xml',
+            'cloud-oracle': 'https://blogs.oracle.com/cloud-infrastructure/feed',
+            'cloud-ibm': 'https://developer.ibm.com/blogs/feed/',
+            'cloud-alibaba': 'https://www.alibabacloud.com/en/blog/rss',
+            'cloud-digitalocean': 'https://www.digitalocean.com/community/tutorials/feed?tag=cloud',
             'cloud-cloudflare': 'https://blog.cloudflare.com/rss/',
-            'cloud-huawei': 'https://blog.huawei.com', # Generic Huawei blog often used
+            'cloud-huawei': 'https://consumer.huawei.com/en/newsroom/rss/',
         }
 
     async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:

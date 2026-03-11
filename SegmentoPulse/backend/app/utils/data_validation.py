@@ -363,6 +363,10 @@ CATEGORY_KEYWORDS = {
         'security', 'cybersecurity', 'data breach', 'hacking', 'vulnerability',
         'encryption', 'malware', 'ransomware', 'firewall', 'zero trust',
         'phishing', 'soc2', 'infosec', 'penetration testing', 'cyber attack',
+        # Bridging terms
+        'cyber threat', 'threat intelligence', 'security incident', 'identity and access',
+        'iam', 'mfa', 'multi-factor authentication', 'devsecops', 'security posture',
+        'insider threat', 'data exfiltration', 'endpoint security', 'siem', 'xdr', 'edr',
     ],
 
     # ── Data Governance ───────────────────────────────────────────────────────
@@ -370,6 +374,10 @@ CATEGORY_KEYWORDS = {
         'data governance', 'compliance', 'regulation', 'audit', 'data policy',
         'metadata management', 'data lineage', 'data stewardship',
         'regulatory compliance', 'data ethics', 'data standards',
+        # Bridging terms
+        'governance framework', 'data ownership', 'data accountability',
+        'data control', 'enterprise data', 'data risk', 'governance platform',
+        'compliance management', 'risk and compliance',
     ],
 
     # ── Data Privacy ──────────────────────────────────────────────────────────
@@ -377,6 +385,10 @@ CATEGORY_KEYWORDS = {
         'data privacy', 'gdpr', 'ccpa', 'user consent', 'personal data',
         'pii', 'anonymization', 'data protection', 'privacy law',
         'hipaa', 'cookie tracking', 'data sovereignty',
+        # Bridging terms — clear signals not caught by strict phrase matching
+        'privacy regulation', 'privacy compliance', 'privacy policy', 'privacy shield',
+        'data rights', 'right to be forgotten', 'data subject', 'consent management',
+        'biometric data', 'sensitive data', 'data localization', 'privacy tech',
     ],
 
     # ── Data Management ───────────────────────────────────────────────────────
@@ -384,20 +396,29 @@ CATEGORY_KEYWORDS = {
         'data management', 'master data', 'mdm', 'data catalog',
         'data quality', 'reference data', 'data lifecycle', 'data architecture',
         'database management', 'data integration',
+        # Bridging terms
+        'data platform', 'data fabric', 'data mesh', 'data store', 'data ops',
+        'dataops', 'data observability', 'data reliability', 'data strategy',
     ],
 
     # ── Business Intelligence ─────────────────────────────────────────────────
     'business-intelligence': [
-        'business intelligence', 'bi', 'analytics dashboard', 'tableau',
+        'business intelligence', 'bi tool', 'analytics dashboard', 'tableau',
         'power bi', 'looker', 'data reporting', 'kpi', 'quicksight', 'qlik',
-        'data visualization', 'metrics dashboard',
+        'data visualization', 'metrics dashboard', 'business intelligence analytics',
+        'bi platform', 'bi software', 'bi solution', 'bi market', 'bi vendor',
+        'intelligence analytics', 'embedded analytics', 'self-service analytics',
     ],
 
     # ── Business Analytics ────────────────────────────────────────────────────
     'business-analytics': [
         'data analytics', 'data analysis', 'business insights', 'business metrics',
         'data-driven', 'business analytics', 'predictive analytics', 'forecasting',
-        'data science', 'business trends',
+        'data science', 'business trends', 'business intelligence analytics',
+        'analytics platform', 'analytics solution', 'analytics market',
+        # Bridging single terms that are unambiguous in context
+        'analytics', 'prescriptive analytics', 'descriptive analytics',
+        'augmented analytics', 'analytics report', 'analytics vendor',
     ],
 
     # ── Customer Data Platform ────────────────────────────────────────────────
@@ -405,6 +426,10 @@ CATEGORY_KEYWORDS = {
         'cdp', 'customer data platform', 'crm', 'customer experience',
         'personalization engine', 'audience segmentation',
         'segment.com', 'salesforce data cloud', 'unified profile',
+        # Bridging terms
+        'first-party data', 'customer journey', 'customer analytics',
+        'customer insights', 'customer 360', 'real-time personalization',
+        'user profiling', 'identity resolution', 'marketing data',
     ],
 
     # ── Data Centers ──────────────────────────────────────────────────────────
@@ -412,6 +437,10 @@ CATEGORY_KEYWORDS = {
         'data center', 'data centre', 'datacenter', 'server rack', 'colocation',
         'edge computing', 'hyperscale', 'hpc', 'liquid cooling',
         'data center cooling', 'server hosting', 'infrastructure',
+        # Bridging terms
+        'facility expansion', 'power usage effectiveness', 'pue', 'green data center',
+        'data center market', 'carrier hotel', 'colo facility', 'rack unit',
+        'data center construction', 'data hall', 'tier iii', 'tier iv',
     ],
 
     # ── Publishing categories ─────────────────────────────────────────────────
@@ -422,6 +451,9 @@ CATEGORY_KEYWORDS = {
     'magazines': [
         'technology', 'tech', 'innovation', 'digital', 'startup',
         'software', 'hardware', 'gadget', 'science', 'electronics',
+        # Bridging terms to improve generic tech article capture
+        'developer', 'programming', 'open source', 'engineering', 'product launch',
+        'research', 'industry report', 'tech news', 'venture capital', 'funding round',
     ],
 }
 
