@@ -412,7 +412,7 @@ async def fetch_daily_research():
 #   4. Zero side-effects — A failed enrichment returns the article unchanged.
 #      The enricher NEVER removes an article from the pipeline.
 #
-async def enrich_missing_images_in_batch(articles: list) -> list:
+async def enrich_missing_images_in_batch(articles: list, delay_seconds: float = 0.0) -> list:
     """
     Scan a list of fully-vetted articles and fill in any missing images.
 
@@ -422,6 +422,7 @@ async def enrich_missing_images_in_batch(articles: list) -> list:
 
     Args:
         articles (list): Final, deduplicated, validated Article objects.
+        delay_seconds (float): Optional delay between concurrent requests to avoid IP bans.
 
     Returns:
         list: Same articles, with image_url filled where possible.
@@ -475,6 +476,8 @@ async def enrich_missing_images_in_batch(articles: list) -> list:
             return article
 
         async with sem:
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
             # Semaphore acquired: one of our 10 lanes is now occupied.
             # extract_top_image has its own 4-second internal timeout,
             # so this will release the lane quickly regardless of outcome.
@@ -826,6 +829,92 @@ async def cleanup_old_news():
         logger.exception("Full traceback:")
 
 
+async def background_image_enricher_job():
+    """
+    Background Job: Fetch articles across collections missing images and enrich them.
+    Runs every 1 hour. Applies delays to avoid IP bans.
+    """
+    logger.info("")
+    logger.info("═" * 80)
+    logger.info("🖼️  [BACKGROUND ENRICHER] Starting missing image scan...")
+    logger.info("═" * 80)
+    
+    appwrite_db = get_appwrite_db()
+    if not appwrite_db.initialized:
+        return
+        
+    try:
+        from appwrite.query import Query
+        from app.models import Article
+        
+        target_collections = [
+            ("Regular News", settings.APPWRITE_COLLECTION_ID),
+            ("Cloud News", settings.APPWRITE_CLOUD_COLLECTION_ID),
+            ("AI News", settings.APPWRITE_AI_COLLECTION_ID),
+            ("Data News", settings.APPWRITE_DATA_COLLECTION_ID),
+        ]
+        
+        total_enriched = 0
+        
+        for name, collection_id in target_collections:
+            if not collection_id:
+                continue
+                
+            # Fetch 50 recent articles and locally filter for empty images
+            response = await appwrite_db.tablesDB.list_rows(
+                database_id=settings.APPWRITE_DATABASE_ID,
+                collection_id=collection_id,
+                queries=[
+                    Query.order_desc('published_at'),
+                    Query.limit(50)
+                ]
+            )
+            
+            docs = response.get('documents', [])
+            # Pick max 10 to avoid scraping too intensely in background
+            empty_docs = [d for d in docs if not d.get('image_url') and not d.get('image')][:10]
+            
+            if not empty_docs:
+                continue
+                
+            logger.info(f"   [{name}] Found {len(empty_docs)} recent articles missing images. Enriching...")
+            
+            articles_to_enrich = []
+            for doc in empty_docs:
+                try:
+                    doc_copy = dict(doc)
+                    if '$id' in doc_copy:
+                        doc_copy['id'] = doc_copy['$id']
+                    art = Article(**doc_copy)
+                    articles_to_enrich.append(art)
+                except Exception as e:
+                    pass
+                    
+            if not articles_to_enrich:
+                continue
+                
+            # Add 2.0s delay between concurrent requests to be polite to news servers
+            enriched = await enrich_missing_images_in_batch(articles_to_enrich, delay_seconds=2.0)
+            
+            for original, new_art in zip(articles_to_enrich, enriched):
+                if new_art.image_url and new_art.image_url.startswith("http"):
+                    try:
+                        await appwrite_db.tablesDB.update_row(
+                            database_id=settings.APPWRITE_DATABASE_ID,
+                            collection_id=collection_id,
+                            document_id=new_art.id,
+                            data={'image_url': new_art.image_url, 'image': new_art.image_url}
+                        )
+                        total_enriched += 1
+                    except Exception as e:
+                        logger.error(f"Error saving enriched image for {new_art.id}: {e}")
+                        
+        logger.info(f"✅ [BACKGROUND ENRICHER] Done. {total_enriched} missing images successfully scraped and saved.")
+        
+    except Exception as e:
+        logger.error(f"❌ [BACKGROUND ENRICHER] Failed: {e}", exc_info=True)
+
+
 def start_scheduler():
     """
     Initialize and start the background scheduler with all jobs
@@ -938,6 +1027,17 @@ def start_scheduler():
     )
     logger.info("")
     logger.info(f"✅ Job #{job_counter + 1} Registered: 🔬 Research Fetcher")
+
+    # Background Image Enricher Job (Every 1 hour)
+    scheduler.add_job(
+        background_image_enricher_job,
+        trigger=IntervalTrigger(hours=1),
+        id='background_image_enricher',
+        name='Image Enricher (every 1 hour)',
+        replace_existing=True
+    )
+    logger.info("")
+    logger.info(f"✅ Job #{job_counter + 2} Registered: 🖼️ Background Image Enricher")
     
     # Start the scheduler
     logger.info("")

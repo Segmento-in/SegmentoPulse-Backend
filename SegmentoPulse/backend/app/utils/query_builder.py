@@ -128,56 +128,36 @@ def build_dynamic_query(category: str, api_type: str = "newsapi") -> str:
     Args:
         category  — e.g. "ai", "cloud-aws", "data-engineering"
         api_type  — one of "newsapi", "gnews", "newsdata"
-
-    Returns:
-        A ready-to-use query string for the specified API format.
-        Never returns a string with a dangling OR or trailing comma.
-        Never returns an empty string (falls back to the raw category slug).
-
-    Example (at UTC hour 5, for "ai" with api_type="newsapi"):
-        anchors  = ["artificial intelligence", "machine learning", "openai"]
-        rotators = ["deep learning", "neural network", "gpt", "llm"] + more...
-        chunks   = [["deep learning","neural network","gpt","llm"],
-                    ["chatgpt","generative ai","computer vision","nlp"], ...]
-        chunk 5 % len(chunks) selected.
-        final    = anchors + selected_chunk
-        output   = '"artificial intelligence" OR "machine learning" OR openai
-                    OR "deep learning" OR "neural network" OR gpt OR llm'
     """
     # ── Step 1: Get the keyword list for this category ────────────────────────
     all_keywords = CATEGORY_KEYWORDS.get(category)
 
     if not all_keywords:
-        # Unknown category — fall back to the raw category slug.
-        # This is safe: it's what the old hardcoded dict did too.
         return category
 
+    # ── Tune Constants based on API type limits ─────────────────────────────
+    # NewsData has strict OR limits (max 5 keywords).
+    anchor_count = 2 if api_type == "newsdata" else _ANCHOR_COUNT
+    chunk_size   = 2 if api_type == "newsdata" else _CHUNK_SIZE
+
     # ── Step 2: Anchor split ──────────────────────────────────────────────────
-    # The first _ANCHOR_COUNT keywords are always included — no matter what hour.
-    anchors  = all_keywords[:_ANCHOR_COUNT]
-    rotators = all_keywords[_ANCHOR_COUNT:]   # everything after the anchors
+    anchors  = all_keywords[:anchor_count]
+    rotators = all_keywords[anchor_count:]
 
     # ── Step 3: Chunk the rotators ────────────────────────────────────────────
-    # If there are no rotators (very small category list), chunks will be [].
-    chunks = _chunk_list(rotators, _CHUNK_SIZE)
+    chunks = _chunk_list(rotators, chunk_size)
 
     # ── Step 4: Pick the active chunk using the UTC clock ─────────────────────
-    # Why UTC?  So the rotation is identical on every server in every timezone.
-    # Why modulo?  Modulo always stays within the valid index range.
-    #   e.g. hour=23, chunks=5  →  23 % 5 = 3  (valid index)
     current_hour = datetime.now(timezone.utc).hour
 
     if chunks:
         active_index = current_hour % len(chunks)
         active_chunk = chunks[active_index]
     else:
-        # No rotators at all — the anchors cover the whole category.
         active_chunk = []
 
     # ── Step 5: Combine anchors + active chunk ────────────────────────────────
     final_keywords = anchors + active_chunk
 
     # ── Step 6: Format and return ─────────────────────────────────────────────
-    # _format_for_api uses Python's .join() which mathematically guarantees
-    # there are no trailing OR operators, dangling commas, or empty gaps.
     return _format_for_api(final_keywords, api_type)

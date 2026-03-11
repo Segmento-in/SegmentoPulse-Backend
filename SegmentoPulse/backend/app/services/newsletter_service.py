@@ -142,11 +142,40 @@ async def get_newsletter_content(preference: str) -> List[Dict]:
             Query.limit(limit)
         ]
         
-        # Step 4: Execute Query
-        articles = await appwrite_db.get_articles_with_queries(queries)
+        # Step 4: Execute Query across Core Categories (AI, Cloud, Data)
+        import asyncio
+        core_categories = ['ai', 'cloud-aws', 'data-engineering']
+        fetch_tasks = []
+        for cat in core_categories:
+            fetch_tasks.append(appwrite_db.get_articles_with_queries(queries, category=cat))
+            
+        results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
         
-        print(f"✅ Found {len(articles)} articles for {preference} newsletter")
-        return articles
+        collections_articles = []
+        for i, res in enumerate(results):
+            if isinstance(res, list):
+                collections_articles.append(res)
+            else:
+                print(f"❌ Error fetching newsletter articles for {core_categories[i]}: {res}")
+                
+        # Step 5: Round-Robin Category Selection
+        # We pull 1 from AI, 1 from Cloud, 1 from Data, to build exactly `limit` diverse articles
+        final_articles = []
+        idx = 0
+        
+        while len(final_articles) < limit and collections_articles:
+            current_list_idx = idx % len(collections_articles)
+            list_to_pull_from = collections_articles[current_list_idx]
+            
+            if list_to_pull_from:
+                final_articles.append(list_to_pull_from.pop(0))
+                idx += 1
+            else:
+                collections_articles.pop(current_list_idx)
+                # Do not increment idx, as the next list shifts into current_list_idx
+        
+        print(f"✅ Found {len(final_articles)} articles for {preference} newsletter via Round-Robin")
+        return final_articles
 
     except Exception as e:
         print(f"❌ Error fetching newsletter content: {e}")
