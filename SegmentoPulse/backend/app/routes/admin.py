@@ -773,25 +773,36 @@ async def reset_circuit_breakers():
 
         circuit = get_circuit_breaker()
 
-        # Step 1: Wipe all Redis circuit keys for known providers.
+        # Step 1: Wipe all Redis circuit keys for ALL known providers
+        # (legacy Phase 1-2 + new modular Phase 3-11).
         cache = get_upstash_cache()
-        known_providers = ["gnews", "newsapi", "newsdata", "google_rss", "medium", "official_cloud"]
+        all_known_providers = [
+            # Legacy providers (Phase 1-2)
+            "gnews", "newsapi", "newsdata",
+            "google_rss", "medium", "official_cloud",
+            # New modular providers (Phase 3-11)
+            "hacker_news", "direct_rss", "thenewsapi",
+            "inshorts", "saurav_static", "worldnewsai",
+            "openrss", "webz", "wikinews",
+        ]
         deleted_keys = []
 
-        for provider in known_providers:
+        for provider in all_known_providers:
             key = f"circuit:{provider}:state"
             result = await cache._execute_command(["DEL", key])
             if result and int(result) > 0:
                 deleted_keys.append(key)
 
-        # Step 2: Reset the in-memory circuit state (all providers go to CLOSED).
+        # Step 2: Reset ALL in-memory circuit states back to CLOSED.
+        # circuit.reset() with no argument resets every tracked provider.
         circuit.reset()
 
         return {
             "success": True,
-            "message": "All circuit breakers have been reset. Paid providers will be tried on the next scheduler run.",
+            "message": "All circuit breakers have been reset. All providers will be tried on the next scheduler run.",
             "redis_keys_deleted": deleted_keys,
-            "redis_keys_checked": [f"circuit:{p}:state" for p in known_providers],
+            "redis_keys_checked": [f"circuit:{p}:state" for p in all_known_providers],
+            "providers_reset": all_known_providers,
             "note": "Run this after fixing a broken API key and redeploying."
         }
 
