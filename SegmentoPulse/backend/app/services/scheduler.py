@@ -538,7 +538,7 @@ async def fetch_and_validate_category(category: str, aggregator) -> tuple:
                     Using a shared instance means all 22 parallel tasks
                     share the same quota counters and circuit-breaker state.
 
-    Returns: (category, valid_articles, invalid_count, irrelevant_count)
+    Returns: (category, valid_articles, invalid_count, irrelevant_count, relevant_count)
     """
     from app.utils.data_validation import is_valid_article, sanitize_article, is_relevant_to_category
     from app.utils.date_parser import normalize_article_date
@@ -559,7 +559,7 @@ async def fetch_and_validate_category(category: str, aggregator) -> tuple:
         raw_articles = await aggregator.fetch_by_category(category)
         
         if not raw_articles:
-            return (category, [], 0, 0)
+            return (category, [], 0, 0, 0)
 
         # ------------------------------------------------------------------
         # IN-BATCH DEDUPLICATION
@@ -670,10 +670,10 @@ async def fetch_and_validate_category(category: str, aggregator) -> tuple:
         
     except asyncio.TimeoutError:
         logger.error("%s Timeout fetching [%s] (>30s)", TAG_ERROR, category)
-        return (category, [], 0, 0)
+        return (category, [], 0, 0, 0)
     except Exception as e:
         logger.exception("%s Error fetching [%s]", TAG_ERROR, category)
-        return (category, [], 0, 0)
+        return (category, [], 0, 0, 0)
 
 
 async def cleanup_old_news():
