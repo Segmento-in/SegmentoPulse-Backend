@@ -97,12 +97,12 @@ def is_valid_article(article: Union[Dict, 'Article']) -> bool:
         if pub_dt.tzinfo is None:
             pub_dt = pub_dt.replace(tzinfo=timezone.utc)
 
-        # Step 1: Find midnight IST today.
-        # We get the current moment in IST, then zero out hours/minutes/seconds.
-        # This gives us "12:00:00 AM of today in India".
+        # Step 1: Find midnight IST of yesterday to allow a broader rolling window
+        # We get the current moment in IST, then zero out hours/minutes/seconds,
+        # and subtract 1 day to allow articles from yesterday, today, and tomorrow.
         ist_zone   = ZoneInfo("Asia/Kolkata")
         now_ist    = datetime.now(ist_zone)
-        cutoff_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
 
         # Step 2: The article timestamp may be in any timezone (UTC, EST, etc.).
         # Python's datetime comparison handles mixed timezones correctly as long
@@ -298,6 +298,7 @@ CATEGORY_KEYWORDS = {
         'openai', 'anthropic', 'sam altman', 'claude', 'gemini', 'mistral',
         'llama', 'copilot', 'midjourney', 'stable diffusion', 'hugging face',
         'rag', 'vector database', 'prompt engineering', 'agi', 'agentic ai',
+        'ai model', 'ai startup', 'genai', 'intelligence', 'robotics', 'algorithm',
     ],
 
     # ── Cloud — generic umbrella category (must stay: used in config.py) ──────
@@ -305,48 +306,48 @@ CATEGORY_KEYWORDS = {
         'cloud computing', 'cloud services', 'aws', 'azure', 'google cloud',
         'gcp', 'salesforce', 'alibaba cloud', 'tencent cloud', 'huawei cloud',
         'cloudflare', 'saas', 'paas', 'iaas', 'serverless', 'kubernetes',
-        'multi-cloud', 'hybrid cloud',
+        'multi-cloud', 'hybrid cloud', 'cloud infrastructure', 'cloud deployment',
     ],
 
     # ── Cloud sub-categories (provider-specific) ───────────────────────────────
     'cloud-aws': [
         'aws', 'amazon web services', 's3', 'ec2', 'lambda', 'cloudfront',
         'sagemaker', 'dynamodb', 'amazon bedrock', 'aws reinvent',
-        'fargate', 'aws graviton', 'elastic beanstalk',
+        'fargate', 'aws graviton', 'elastic beanstalk', 'amazon cloud',
     ],
     'cloud-azure': [
         'azure', 'microsoft azure', 'azure devops', 'azure ml',
         'azure openai', 'microsoft cloud', 'azure synapse', 'cosmos db',
-        'azure arc', 'microsoft entra',
+        'azure arc', 'microsoft entra', 'azure cloud',
     ],
     'cloud-gcp': [
         'gcp', 'google cloud', 'bigquery', 'vertex ai', 'cloud run',
         'dataflow', 'google kubernetes engine', 'gke', 'google spanner',
-        'anthos', 'cloud sql', 'gemini for google cloud',
+        'anthos', 'cloud sql', 'gemini for google cloud', 'google workspace',
     ],
     'cloud-alibaba': [
         'alibaba cloud', 'aliyun', 'alicloud', 'polar db', 'maxcompute',
-        'elastic compute service', 'tongyi qianwen', 'qwen',
+        'elastic compute service', 'tongyi qianwen', 'qwen', 'alibaba',
     ],
     'cloud-huawei': [
         'huawei cloud', 'huaweicloud', 'pangu model',
-        'harmonyos', 'kunpeng', 'ascend ai',
+        'harmonyos', 'kunpeng', 'ascend ai', 'huawei',
     ],
     'cloud-digitalocean': [
         'digitalocean', 'digital ocean', 'do droplet', 'digitalocean spaces',
-        'digitalocean app platform', 'managed kubernetes', 'cloudways',
+        'digitalocean app platform', 'managed kubernetes', 'cloudways', 'vps',
     ],
     'cloud-oracle': [
         'oracle cloud', 'oci', 'oracle database', 'oracle fusion',
-        'oracle cloud infrastructure', 'mysql heatwave', 'oracle apex',
+        'oracle cloud infrastructure', 'mysql heatwave', 'oracle apex', 'oracle',
     ],
     'cloud-ibm': [
         'ibm cloud', 'ibm watson', 'red hat', 'openshift',
-        'ibm z', 'watsonx', 'ibm mainframe',
+        'ibm z', 'watsonx', 'ibm mainframe', 'ibm',
     ],
     'cloud-cloudflare': [
         'cloudflare', 'cloudflare workers', 'cloudflare r2',
-        'cloudflare pages', 'zero trust',
+        'cloudflare pages', 'zero trust', 'cdn', 'ddos',
     ],
 
     # ── Data Engineering ───────────────────────────────────────────────────────
@@ -354,70 +355,73 @@ CATEGORY_KEYWORDS = {
         'data engineering', 'data pipeline', 'etl', 'elt', 'big data',
         'apache spark', 'hadoop', 'kafka', 'airflow', 'data warehouse',
         'snowflake', 'databricks', 'dbt', 'fivetran', 'apache iceberg',
-        'delta lake', 'data lakehouse',
+        'delta lake', 'data lakehouse', 'data processing', 'streaming data',
     ],
 
     # ── Data Security ─────────────────────────────────────────────────────────
     'data-security': [
         'security', 'cybersecurity', 'data breach', 'hacking', 'vulnerability',
         'encryption', 'malware', 'ransomware', 'firewall', 'zero trust',
-        'phishing', 'soc2', 'infosec', 'penetration testing',
+        'phishing', 'soc2', 'infosec', 'penetration testing', 'cyber attack',
     ],
 
     # ── Data Governance ───────────────────────────────────────────────────────
     'data-governance': [
         'data governance', 'compliance', 'regulation', 'audit', 'data policy',
         'metadata management', 'data lineage', 'data stewardship',
-        'regulatory compliance',
+        'regulatory compliance', 'data ethics', 'data standards',
     ],
 
     # ── Data Privacy ──────────────────────────────────────────────────────────
     'data-privacy': [
         'data privacy', 'gdpr', 'ccpa', 'user consent', 'personal data',
         'pii', 'anonymization', 'data protection', 'privacy law',
-        'hipaa', 'cookie tracking',
+        'hipaa', 'cookie tracking', 'data sovereignty',
     ],
 
     # ── Data Management ───────────────────────────────────────────────────────
     'data-management': [
         'data management', 'master data', 'mdm', 'data catalog',
         'data quality', 'reference data', 'data lifecycle', 'data architecture',
+        'database management', 'data integration',
     ],
 
     # ── Business Intelligence ─────────────────────────────────────────────────
     'business-intelligence': [
         'business intelligence', 'bi', 'analytics dashboard', 'tableau',
         'power bi', 'looker', 'data reporting', 'kpi', 'quicksight', 'qlik',
+        'data visualization', 'metrics dashboard',
     ],
 
     # ── Business Analytics ────────────────────────────────────────────────────
     'business-analytics': [
         'data analytics', 'data analysis', 'business insights', 'business metrics',
         'data-driven', 'business analytics', 'predictive analytics', 'forecasting',
+        'data science', 'business trends',
     ],
 
     # ── Customer Data Platform ────────────────────────────────────────────────
     'customer-data-platform': [
         'cdp', 'customer data platform', 'crm', 'customer experience',
         'personalization engine', 'audience segmentation',
-        'segment.com', 'salesforce data cloud',
+        'segment.com', 'salesforce data cloud', 'unified profile',
     ],
 
     # ── Data Centers ──────────────────────────────────────────────────────────
     'data-centers': [
         'data center', 'data centre', 'datacenter', 'server rack', 'colocation',
         'edge computing', 'hyperscale', 'hpc', 'liquid cooling',
-        'data center cooling',
+        'data center cooling', 'server hosting', 'infrastructure',
     ],
 
     # ── Publishing categories ─────────────────────────────────────────────────
     'medium-article': [
         'medium', 'article', 'blog', 'writing', 'publishing',
-        'content', 'story', 'author', 'blogging',
+        'content', 'story', 'author', 'blogging', 'programming', 'developer',
     ],
     'magazines': [
         'technology', 'tech', 'innovation', 'digital', 'startup',
-        'software', 'hardware', 'gadget',
+        'software', 'hardware', 'gadget', 'science', 'electronics',
     ],
 }
 
@@ -493,6 +497,13 @@ def is_relevant_to_category(article: Union[Dict, 'Article'], category: str) -> b
         article_dict = article.dict()
     else:
         article_dict = article
+
+    # ── Step 1.5: Official Source Bypass ──────────────────────────────────────
+    # Official Cloud Providers set their source to "Official AWS Blog" etc.
+    # These must bypass the strict keyword checks to ensure high ingestion.
+    source = article_dict.get('source', '').lower()
+    if source.startswith('official ') and ' blog' in source:
+        return True
 
     # ── Step 2: Look up the pre-compiled pattern for this category ────────────
     pattern = COMPILED_CATEGORY_REGEX.get(category)

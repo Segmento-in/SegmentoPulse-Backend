@@ -128,15 +128,22 @@ class ResearchAggregator:
         if not internal_cat:
             return None # Skip if not in our scope
             
+        import hashlib
+        pdf_url = paper.pdf_url
+        url_hash = hashlib.sha256(pdf_url.encode('utf-8')).hexdigest()
+            
         # 2. Format Data
         return {
             "paper_id": self._get_short_id(paper.entry_id),
             "title": paper.title.replace("\n", " ").strip(),
             "summary": paper.summary.replace("\n", " ").strip(),
+            "description": paper.summary.replace("\n", " ").strip(), # Added for general compatibility
             "authors": [a.name for a in paper.authors],
             "published_at": paper.published.isoformat(),
-            "pdf_url": paper.pdf_url,
-            "url": paper.pdf_url, # COMPATIBILITY: Map pdf_url to url for frontend/models
+            "pdf_url": pdf_url,
+            "url": pdf_url, # COMPATIBILITY: Map pdf_url to url for frontend/models
+            "image_url": "", # Ensure empty string to avoid null schema violations
+            "url_hash": url_hash, # Required by base schema
             "category": internal_cat,     # research-ai
             "original_category": primary_cat, # cs.AI
             "sub_category": INTERNAL_TO_DISPLAY.get(internal_cat, "Research"), # Friendly name
@@ -158,30 +165,26 @@ class ResearchAggregator:
             return False
             
         try:
-            # 1. Create (Atomic)
-            # We rely on the unique index on paper_id to throw 409 Conflict if exists.
-            # This avoids the "Check-Then-Act" race condition.
-
-            # 2. Create
             # We need to flatten authors list to string because Appwrite String array 
             # logic depends on how we created schema. 
-            # Wait, `authors` attribute in script was `type: string, size: 5000`. 
-            # It's a single string, not array.
-            # So we join them.
             paper_data['authors'] = ", ".join(paper_data['authors'])
+            
+            # Use deterministic document ID to let Appwrite natively catch duplicates
+            # Document IDs max 36 chars: alphanumeric, _, -, .
+            doc_id = paper_data['paper_id'].replace('.', '_').replace('/', '_')
             
             await appwrite.tablesDB.create_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_RESEARCH_COLLECTION_ID,
-                document_id="unique()",
+                document_id=doc_id,
                 data=paper_data
             )
             logger.info(f"   💾 Saved: {paper_data['title'][:50]}...")
             return True
             
         except Exception as e:
-            # Check for 409 Conflict (Appwrite throws Exception with message)
-            if "Document already exists" in str(e) or "409" in str(e):
+            # Check for 409 Conflict Document already exists
+            if "already exists" in str(e).lower() or "409" in str(e):
                  logger.debug(f"   ⏭️  Skipping duplicate (Atomic): {paper_data['paper_id']}")
                  return False
             
