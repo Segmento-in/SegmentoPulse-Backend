@@ -228,6 +228,61 @@ class UpstashCache:
         except Exception as e:
             logger.error(f"❌ Cache delete error for {key}: {e}")
             return False
+
+    async def lpush(self, queue_name: str, item: str) -> bool:
+        """
+        Push an item to the left of a Redis list (Producer action)
+        
+        Args:
+            queue_name: Name of the list/queue
+            item: String item to push
+        """
+        try:
+            result = await self._execute_command(["LPUSH", queue_name, item])
+            return result is not None
+        except Exception as e:
+            logger.error(f"❌ LPUSH error: {e}")
+            return False
+
+    async def rpop(self, queue_name: str) -> Optional[str]:
+        """
+        Remove and return the rightmost item of a Redis list (Consumer action)
+        """
+        try:
+            return await self._execute_command(["RPOP", queue_name])
+        except Exception as e:
+            logger.error(f"❌ RPOP error: {e}")
+            return None
+
+    async def llen(self, queue_name: str) -> int:
+        """
+        Get the length of the queue to prevent flooding
+        """
+        try:
+            result = await self._execute_command(["LLEN", queue_name])
+            return int(result) if result is not None else 0
+        except Exception:
+            return 0
+
+    async def rpoplpush(self, source_queue: str, destination_queue: str) -> Optional[str]:
+        """
+        Atomically move a task from pending to processing (Reliable Queue pattern)
+        """
+        try:
+            return await self._execute_command(["RPOPLPUSH", source_queue, destination_queue])
+        except Exception as e:
+            logger.error(f"❌ RPOPLPUSH error: {e}")
+            return None
+
+    async def lrem(self, queue_name: str, count: int, item: str) -> bool:
+        """
+        Remove occurrences of an item from a list.
+        """
+        try:
+            result = await self._execute_command(["LREM", queue_name, count, item])
+            return result is not None
+        except Exception:
+            return False
     
     async def invalidate_pattern(self, pattern: str) -> int:
         """

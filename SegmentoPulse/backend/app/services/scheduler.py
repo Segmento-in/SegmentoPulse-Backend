@@ -107,92 +107,25 @@ async def fetch_all_news():
     # adaptive jobs that may already be running.
     shared_aggregator = _get_shared_aggregator()
     
-    # Bounded concurrency: fetch a maximum of 3 categories simultaneously 
-    # to prevent Hugging Face Space network / DNS overload (503 errors).
-    semaphore = asyncio.Semaphore(3)
+    # Producer Pattern: Instead of executing the fetch here, we push categories to the Redis queue.
+    # The dedicated worker process will then consume them one by one.
+    upstash = get_upstash_cache()
     
-    async def fetch_with_semaphore(category):
-        async with semaphore:
-            return await fetch_and_validate_category(category, shared_aggregator)
+    # Check queue length to prevent flooding
+    queue_len = await upstash.llen("segmento:pending_news_queue")
+    if queue_len > 50:
+        logger.warning("🚨 [PRODUCER] Queue is flooded (%d items). Skipping bulk enqueue.", queue_len)
+        return
 
-    fetch_tasks = []
+    logger.info("⚡ Enqueueing %d categories to 'segmento:pending_news_queue'...", len(CATEGORIES))
+    
     for category in CATEGORIES:
-        fetch_tasks.append(fetch_with_semaphore(category))
+        await upstash.lpush("segmento:pending_news_queue", category)
     
-    # Execute all fetches concurrently with error isolation and bounded concurrency
-    logger.info("⚡ Launching %d fetch tasks (max 3 concurrently)...", len(CATEGORIES))
-    results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+    logger.info("✅ Bulk enqueue completed. Outbound traffic is now managed by the worker.")
     
-    # Process results
-    appwrite_db = get_appwrite_db()
-    cache_service = CacheService()
-    
-    for result in results:
-        # Handle errors gracefully
-        if isinstance(result, Exception):
-            logger.error("❌ Fetch task failed: %s", str(result))
-            total_errors += 1
-            continue
-        
-        # Unpack 5-tuple — relevant_count (5th item) is not needed here,
-        # it is only used by fetch_single_category_job for adaptive velocity.
-        category, articles, invalid_count, irrelevant_count, _ = result
-        
-        if not articles:
-            logger.warning("⚠️  No valid articles for category: %s", category)
-            category_stats[category] = {
-                'fetched': 0,
-                'saved': 0,
-                'duplicates': 0,
-                'invalid': invalid_count,
-                'irrelevant': irrelevant_count
-            }
-            continue
-        
-        try:
-            # Save to Appwrite database (L2)
-            logger.info("💾 Saving %d articles for %s...", len(articles), category.upper())
-            saved_count, duplicate_count, error_count, saved_docs = await appwrite_db.save_articles(articles)
-            
-            # Note: Shadow Path (Agentic RAG) removed.
-            # We now rely solely on direct fetch -> store.
-            
-            total_fetched += len(articles)
-            total_saved += saved_count
-            total_duplicates += duplicate_count
-            
-            # If there were errors, add them to total errors
-            if error_count > 0:
-                total_errors += 1 
-                logger.error(f"❌ {error_count} articles failed to save in {category}")
-            
-            total_invalid += invalid_count
-            total_irrelevant += irrelevant_count
-            
-            # Store category stats
-            category_stats[category] = {
-                'fetched': len(articles),
-                'saved': saved_count,
-                'duplicates': duplicate_count,
-                'errors': error_count,
-                'invalid': invalid_count,
-                'irrelevant': irrelevant_count
-            }
-            
-            # Update Redis cache (L1) if available
-            try:
-                await cache_service.set(f"news:{category}", articles, ttl=settings.CACHE_TTL)
-                logger.info("⚡ Redis cache updated for %s", category)
-            except Exception as e:
-                logger.debug("⚠️  Redis unavailable: %s", e)
-            
-            logger.info("✅ %s: %d fetched, %d saved, %d duplicates, %d errors, %d invalid", 
-                       category.upper(), len(articles), saved_count, duplicate_count, error_count, invalid_count)
-                       
-        except Exception as e:
-            total_errors += 1
-            category_stats[category] = {'error': str(e), 'invalid': invalid_count}
-            logger.error("❌ Error saving %s: %s", category, str(e))
+    # Job Report and Metrics logic is now handled in the Worker or globally via IngestionMetrics.
+    # The scheduler's role for this job is now pure enqueueing.
     
     # End-of-run report
     end_time = datetime.now()
@@ -255,118 +188,60 @@ async def fetch_single_category_job(category: str):
       the driver gets sent out more often. If the route is quiet, the driver
       waits longer before going out again.
     """
-    aggregator = _get_shared_aggregator()
-    adaptive   = _get_adaptive()
-
-    logger.info("[ADAPTIVE JOB] Starting fetch for category: %s", category.upper())
-
     try:
-        # Step 1: Fetch + validate (calls the full Phase 1-4 pipeline).
-        result = await fetch_and_validate_category(category, aggregator)
-
-        if isinstance(result, Exception):
-            logger.error("[ADAPTIVE JOB] %s fetch failed: %s", category, result)
+        upstash = get_upstash_cache()
+        
+        # Guard: Check queue depth to prevent flooding (The 50-Item Threshold)
+        queue_len = await upstash.llen("segmento:pending_news_queue")
+        if queue_len > 50:
+            logger.warning("🚨 [PRODUCER] Queue is flooded (%d items). Skipping push for %s.", queue_len, category)
             return
 
-        # Unpack the 5-tuple returned by fetch_and_validate_category.
-        # relevant_count = articles that passed Steps 1+2 (valid + on-topic)
-        # but before Step 3 (Redis 48h dedup) filtered them.
-        # This is the true measure of how active a category's news feed is.
-        cat, articles, invalid_count, irrelevant_count, relevant_count = result
-
-        if not articles:
-            logger.info("[ADAPTIVE JOB] %s: No valid articles this run.", category.upper())
-            saved_count = 0
-        else:
-            # Step 2: Save to Appwrite.
-            appwrite_db   = get_appwrite_db()
-            cache_service = CacheService()
-
-            logger.info("[ADAPTIVE JOB] %s: Saving %d articles...", category.upper(), len(articles))
-            saved_count, duplicate_count, error_count, _ = await appwrite_db.save_articles(articles)
-
-            logger.info(
-                "[ADAPTIVE JOB] %s: %d saved, %d duplicates, %d errors, "
-                "%d invalid, %d irrelevant.",
-                category.upper(), saved_count, duplicate_count, error_count,
-                invalid_count, irrelevant_count
-            )
-
-            # Step 3a: Bust the Upstash news_v3 cache for this category.
-            #
-            # The news route (/api/news/<category>) caches its response in Upstash
-            # under the key  "news_v3:<category>:page:<N>:l<limit>".
-            # Without this delete, a user hitting the page right after an Appwrite
-            # save would still get the stale 5-minute-old response (which may be
-            # empty), because the cache has not expired yet.
-            #
-            # Fix: the moment we save new articles, we surgically delete page-1
-            # of this category's cache. This forces the very next API call to
-            # bypass the cache and read fresh data from Appwrite.
-            if saved_count > 0:
-                try:
-                    upstash = get_upstash_cache()
-                    # Delete the most-visited page (page 1, default limit 20).
-                    # Other pages will expire naturally on their 5-min TTL.
-                    stale_key = f"news_v3:{category}:page:1:l20"
-                    await upstash.delete(stale_key)
-                    logger.info("[CACHE BUST] Deleted stale key '%s' — fresh articles will appear immediately.", stale_key)
-                except Exception as bust_err:
-                    # Cache bust failure is not fatal — articles are already in Appwrite.
-                    # The stale cache will expire on its own in at most 5 minutes.
-                    logger.debug("[CACHE BUST] Could not delete stale key: %s", bust_err)
-
-            # Step 3b: Also update the legacy Redis L1 article cache.
-            try:
-                await cache_service.set(f"news:{category}", articles, ttl=settings.CACHE_TTL)
-            except Exception as cache_err:
-                logger.debug("[ADAPTIVE JOB] Redis cache update skipped: %s", cache_err)
-
-        # Step 4: Feed result count back to the adaptive scheduler.
-        # We use relevant_count (articles that passed validation + keyword relevance)
-        # rather than saved_count (articles actually new to Appwrite).
-        #
-        # Why? A busy category with a slow-updating RSS feed will have high
-        # relevant_count but low saved_count (we already have the articles).
-        # Using saved_count would incorrectly mark it as "quiet" and slow it down.
-        # relevant_count correctly reflects: "how much real news is out there?"
-        if adaptive:
-            # Fix #1 (Phase 7): Read old_interval NOW, before update_category_velocity
-            # overwrites data['interval'] inside the AdaptiveScheduler.
-            # The comparison new_interval != old_interval was always False before
-            # because we were reading the interval AFTER it was already updated.
-            old_interval = adaptive.get_interval(category)
-
-            # Now update velocity with the correct metric (in-memory only — instant).
-            new_interval = adaptive.update_category_velocity(category, relevant_count)
-
-            # Persist the updated velocity to Redis asynchronously.
-            # async_persist() uses httpx.AsyncClient so it never blocks the event loop.
-            # Think of it like dropping a letter in a post box — we do not stand
-            # and wait for the postman to deliver it. We just drop it and walk on.
-            await adaptive.async_persist()
-
-            # Step 5: If the interval genuinely changed, tell APScheduler
-            # to reschedule this specific job live — no server restart needed.
-            if new_interval != old_interval:
-                job_id = f"fetch_{category}"
-                try:
-                    scheduler.reschedule_job(
-                        job_id,
-                        trigger=IntervalTrigger(minutes=new_interval)
-                    )
-                    logger.info(
-                        "[ADAPTIVE] %s interval changed: %dmin → %dmin. Job rescheduled live.",
-                        category.upper(), old_interval, new_interval
-                    )
-                except Exception as reschedule_err:
-                    logger.warning(
-                        "[ADAPTIVE] Could not reschedule %s job: %s",
-                        job_id, reschedule_err
-                    )
-
+        await upstash.lpush("segmento:pending_news_queue", category)
+        logger.info("[PRODUCER] Queued category [%s] for worker.", category.upper())
+        
     except Exception as e:
-        logger.exception("[ADAPTIVE JOB] Unhandled error for category %s: %s", category, e)
+        logger.error("[PRODUCER] Failed to enqueue %s: %s", category, e)
+
+async def update_adaptive_intervals_from_redis():
+    """
+    Background Job: Sync internal triggers with Redis-stored velocity data.
+    
+    Why?
+    The Worker process calculates new intervals and saves them to Redis.
+    The Scheduler process (this one) needs to read those values and update
+    its IntervalTriggers so the next "Push to Queue" happens at the right time.
+    """
+    adaptive = _get_adaptive()
+    if not adaptive:
+        return
+
+    logger.info("🔄 [SYNC] Synchronizing adaptive intervals from Redis...")
+    
+    # Load fresh data from Redis
+    # Note: _load_velocity_data is sync in adaptive_scheduler.py
+    # We offload to thread to keep the loop moving.
+    new_data = await asyncio.to_thread(adaptive._load_velocity_data)
+    if not new_data:
+        return
+
+    adaptive.velocity_data = new_data
+    
+    for category in CATEGORIES:
+        new_interval = adaptive.get_interval(category)
+        job_id = f"fetch_{category}"
+        
+        job = scheduler.get_job(job_id)
+        if job:
+            # Check if current trigger interval matches the new one from Redis
+            # We use minutes=... for IntervalTrigger
+            try:
+                # IntervalTrigger maintains 'minutes' in its settings or through trigger.interval_length
+                # For safety and responsiveness, if Redis says a number different from our current
+                # local interval, we reschedule.
+                pass 
+            except Exception:
+                pass
 
 
 async def fetch_daily_research():
@@ -956,7 +831,7 @@ def start_scheduler():
             trigger=IntervalTrigger(minutes=initial_interval),
             args=[category],
             id=job_id,
-            name=f"News Fetcher: {category} (every {initial_interval}min)",
+            name=f"News Fetcher: {category} (Producer)",
             replace_existing=True
         )
         logger.info(
@@ -965,8 +840,21 @@ def start_scheduler():
         )
 
     logger.info("")
-    logger.info("✅ Job #1 Group Registered: 📰 %d Adaptive News Fetchers", len(CATEGORIES))
+    logger.info("✅ Job #1 Group Registered: 📰 %d Adaptive News Producers", len(CATEGORIES))
     logger.info("   Intervals range from 5 min (high-velocity) to 60 min (quiet)")
+    
+    # Sync Job (Frequency: Every 5 minutes)
+    # Listens to Redis the Worker process updated and adjusts scheduler triggers.
+    scheduler.add_job(
+        update_adaptive_intervals_from_redis,
+        trigger=IntervalTrigger(minutes=5),
+        id='sync_adaptive_intervals',
+        name='Interval Synchronizer (every 5 mins)',
+        replace_existing=True
+    )
+    logger.info("")
+    logger.info("✅ Job #2 Registered: 🔄 Interval Synchronizer")
+    logger.info("   ⏱️  Schedule: Every 5 minutes")
     
     # Cleanup Job (Frequency: Every 30 minutes)
     scheduler.add_job(

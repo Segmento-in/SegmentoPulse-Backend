@@ -26,7 +26,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           
           # Add Hugging Face remote
-          git remote add hf https://WORKWITHSHAFISK:$HF_TOKEN@huggingface.co/spaces/WORKWITHSHAFISK/Segmento-Pulse-Backend || true
+          git remote add hf https://SHAFISK17:$HF_TOKEN@huggingface.co/spaces/SHAFISK17/Pulse-backend || true
           
           # Force push to Hugging Face (main branch)
           git push --force hf HEAD:main
@@ -34,4 +34,4 @@ jobs:
       - name: Deployment status
         run: |
           echo "✅ Successfully synced to Hugging Face Spaces!"
-          echo "🔗 Space URL: https://huggingface.co/spaces/WORKWITHSHAFISK/Segmento-Pulse-Backend"
+          echo "🔗 Space URL: https://huggingface.co/spaces/SHAFISK17/Pulse-backend"

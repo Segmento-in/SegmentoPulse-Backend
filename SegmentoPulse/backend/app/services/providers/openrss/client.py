@@ -107,7 +107,7 @@ OPENRSS_FEEDS: List[tuple] = [
 COOLDOWN_SECONDS = 3600
 
 # HTTP request timeout. OpenRSS is a third-party service; give it enough time.
-HTTP_TIMEOUT_SECONDS = 15.0
+HTTP_TIMEOUT_SECONDS = 10.0
 
 # Max articles to take from each individual feed per cooldown window.
 MAX_ARTICLES_PER_FEED = 10
@@ -278,10 +278,7 @@ class OpenRSSProvider(NewsProvider):
             if response.status_code == 429:
                 # If OpenRSS sends a 429 despite our cooldown, double the wait
                 # by resetting the timer to now (conservative recovery).
-                logger.warning(
-                    f"[OpenRSS] [{source_name}] HTTP 429 — rate-limited despite "
-                    "cooldown. Consider increasing COOLDOWN_SECONDS."
-                )
+                self.handle_429()
                 return []
 
             if response.status_code != 200:

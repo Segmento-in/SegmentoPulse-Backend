@@ -166,6 +166,10 @@ class HackerNewsProvider(NewsProvider):
         try:
             response = await client.get(HN_TOP_STORIES_URL)
 
+            if response.status_code == 429:
+                self.handle_429()
+                return []
+
             if response.status_code != 200:
                 logger.warning(
                     f"[HackerNews] Top stories endpoint returned HTTP {response.status_code}"
@@ -201,6 +205,10 @@ class HackerNewsProvider(NewsProvider):
         url = HN_ITEM_URL.format(item_id=item_id)
         try:
             response = await client.get(url)
+
+            if response.status_code == 429:
+                self.handle_429()
+                return None
 
             if response.status_code != 200:
                 return None

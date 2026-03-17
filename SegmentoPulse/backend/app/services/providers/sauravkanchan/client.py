@@ -74,7 +74,7 @@ STATIC_FEED_URLS: List[tuple] = [
 
 # HTTP request timeout. Static files are fast, but we keep this generous
 # because GitHub Pages occasionally has slow cold starts.
-HTTP_TIMEOUT_SECONDS = 12.0
+HTTP_TIMEOUT_SECONDS = 10.0
 
 # Max articles to take from each regional file.
 # 100 articles per file × 2 files = up to 200 raw articles per call.
@@ -236,6 +236,10 @@ class SauravKanchanProvider(NewsProvider):
                 headers={"User-Agent": "SegmentoPulse-Ingestion/1.0"},
                 follow_redirects=True,
             )
+
+            if response.status_code == 429:
+                self.handle_429()
+                return []
 
             if response.status_code != 200:
                 logger.warning(

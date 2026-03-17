@@ -90,7 +90,7 @@ WIKINEWS_CATEGORIES = [
 MAX_ARTICLES_PER_CATEGORY = 10
 
 # HTTP timeout in seconds. Wikimedia servers are reliable but can be slow.
-HTTP_TIMEOUT_SECONDS = 12.0
+HTTP_TIMEOUT_SECONDS = 10.0
 
 # Regex to strip ALL HTML tags from MediaWiki search snippets.
 # MediaWiki wraps search terms in <span class="searchmatch">...</span> tags.
@@ -229,8 +229,7 @@ class WikinewsProvider(NewsProvider):
             )
 
             if response.status_code == 429:
-                logger.warning(f"[Wikinews] [{wiki_category}] HTTP 429 rate limit.")
-                self.mark_rate_limited()
+                self.handle_429()
                 return []
 
             if response.status_code != 200:
