@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = [
         "https://segmento.in",      # Production frontend
         "http://localhost:3000",    # Local dev frontend
-        "http://127.0.0.1:3000"     # Alternative local dev
+        "http://127.0.0.1:3000",     # Alternative local dev
+        "http://localhost:3001",    # Local dev frontend
+        "http://127.0.0.1:3001"     # Alternative local dev
     ]
     
     # News API
