@@ -217,6 +217,8 @@ class NewsAggregator:
         # Before the worker begins fetching the actual URLs for a popped category,
         # inject a randomized sleep to break up predictable robotic execution patterns.
         import random
+        import logging
+        logger = logging.getLogger(__name__)
         startup_jitter = random.uniform(1.0, 3.0)
         logger.info("🎲 [JITTER] Worker start-up jitter: sleeping for %.2fs...", startup_jitter)
         await asyncio.sleep(startup_jitter)

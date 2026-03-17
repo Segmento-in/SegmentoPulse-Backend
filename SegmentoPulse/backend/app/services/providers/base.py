@@ -1,6 +1,6 @@
-```
-providers/base.py
-─────────────────────────────────────────────────────────────────────────────
+
+#─────────────────────────────────────────────────────────────────────────────
+"""
 The Foundation — every news provider in this system inherits from this file.
 
 Think of this like a "job contract" for a news provider. Any class that wants
@@ -12,7 +12,7 @@ If a class inherits from NewsProvider but does NOT implement fetch_news(),
 Python will throw a TypeError at startup — which is exactly what we want.
 It forces every developer to write proper fetching logic.
 
-── RULE: THE CATEGORY ROUTING CONTRACT ─────────────────────────────────────
+#── RULE: THE CATEGORY ROUTING CONTRACT ─────────────────────────────────────
 
 Every Article produced by a provider MUST have a 'category' field.
 The category value routes the article to the correct Appwrite collection.
@@ -34,7 +34,7 @@ Current routing rules (defined in appwrite_db.get_collection_id):
     NEVER set category = None — that will cause a Pydantic validation error.
     NEVER invent a category string that is not in config.py CATEGORIES list.
 
-── HOW CLIENT-SIDE FILTERING WORKS ─────────────────────────────────────────
+#── HOW CLIENT-SIDE FILTERING WORKS ─────────────────────────────────────────
 
 Many providers (Hacker News, RSS Feeds, static files) do NOT support
 filtering by date or keyword in their API request. That is okay.
