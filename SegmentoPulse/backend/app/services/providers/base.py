@@ -1,6 +1,7 @@
 ```
 providers/base.py
 #─────────────────────────────────────────────────────────────────────────────
+"""
 The Foundation — every news provider in this system inherits from this file.
 
 Think of this like a "job contract" for a news provider. Any class that wants
