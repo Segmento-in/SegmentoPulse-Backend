@@ -1,5 +1,3 @@
-```
-providers/base.py
 #─────────────────────────────────────────────────────────────────────────────
 """
 The Foundation — every news provider in this system inherits from this file.
