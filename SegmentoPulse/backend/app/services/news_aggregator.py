@@ -213,6 +213,14 @@ class NewsAggregator:
             Duplicates are fine here — the in-batch deduplication in scheduler.py
             will clean them up right after this function returns.
         """
+        # ── Task 4: Worker Start-up Jitter ────────────────────────────────────
+        # Before the worker begins fetching the actual URLs for a popped category,
+        # inject a randomized sleep to break up predictable robotic execution patterns.
+        import random
+        startup_jitter = random.uniform(1.0, 3.0)
+        logger.info("🎲 [JITTER] Worker start-up jitter: sleeping for %.2fs...", startup_jitter)
+        await asyncio.sleep(startup_jitter)
+
         async with self._lock:
             self.stats['total_requests'] += 1
 
@@ -250,6 +258,13 @@ class NewsAggregator:
                 continue
 
             try:
+                # ── Task 4: Intra-Category Rate Limiting (Sequential Chain) ───
+                # If this isn't the first provider in the loop, wait a bit
+                # to avoid hitting multiple paid providers in rapid succession.
+                if paid_success: # only if we are still in the loop after a fail
+                   intra_delay = random.uniform(0.2, 0.7)
+                   await asyncio.sleep(intra_delay)
+
                 print(f"[PAID]    [{provider_name.upper()}] Fetching '{category}'...")
                 articles = await provider.fetch_news(category, limit=20)
 
@@ -348,8 +363,21 @@ class NewsAggregator:
                     free_names.append('wikinews')
 
         if free_tasks:
-            print(f"[FREE]    Launching {len(free_tasks)} free source(s) in parallel for '{category}'...")
-            free_results = await asyncio.gather(*free_tasks, return_exceptions=True)
+            # ── Task 4: Intra-Category Rate Limiting (Parallel Launch Jitter) ──
+            # To prevent parallel tasks from hitting the same shared IP outbound
+            # gate simultaneously, we wrap each task in a small jittered wrapper.
+            async def _jittered_fetch(name, task):
+                delay = random.uniform(0.1, 0.5)
+                await asyncio.sleep(delay)
+                return await task
+
+            jittered_tasks = [
+                _jittered_fetch(name, task)
+                for name, task in zip(free_names, free_tasks)
+            ]
+
+            print(f"[FREE]    Launching {len(free_tasks)} free source(s) with jitter in parallel for '{category}'...")
+            free_results = await asyncio.gather(*jittered_tasks, return_exceptions=True)
 
             for name, result in zip(free_names, free_results):
                 if isinstance(result, Exception):

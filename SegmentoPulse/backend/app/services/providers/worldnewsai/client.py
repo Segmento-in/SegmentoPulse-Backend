@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 WORLDNEWSAI_SEARCH_URL = "https://api.worldnewsapi.com/search-news"
 
 # Request timeout in seconds
-HTTP_TIMEOUT_SECONDS = 12.0
+HTTP_TIMEOUT_SECONDS = 10.0
 
 # Articles per call. Keep it modest to save points per request.
 ARTICLES_PER_REQUEST = 10
@@ -230,8 +230,7 @@ class WorldNewsAIProvider(NewsProvider):
 
                 # ── HTTP 429: Too many requests (short-term rate limit) ───
                 if response.status_code == 429:
-                    logger.warning("[WorldNewsAI] HTTP 429 — request rate exceeded.")
-                    self.mark_rate_limited()
+                    self.handle_429()
                     return []
 
                 # ── Any other non-200 ─────────────────────────────────────

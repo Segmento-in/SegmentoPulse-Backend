@@ -202,8 +202,7 @@ class TheNewsAPIProvider(NewsProvider):
 
                 # ── Handle rate limit ─────────────────────────────────────
                 if response.status_code == 429:
-                    logger.warning("[TheNewsAPI] Hit 429 rate limit. Marking as rate-limited.")
-                    self.mark_rate_limited()
+                    self.handle_429()
                     return []
 
                 # ── Handle authentication failure ─────────────────────────

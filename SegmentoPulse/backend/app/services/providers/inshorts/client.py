@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 INSHORTS_URL = "https://inshorts.deta.dev/news?category=technology"
 
 # Request timeout in seconds. Kept generous because this is a community server.
-HTTP_TIMEOUT_SECONDS = 12.0
+HTTP_TIMEOUT_SECONDS = 10.0
 
 # Max articles to take from one response. Inshorts usually sends 10-25.
 MAX_ARTICLES = 20
@@ -165,8 +165,7 @@ class InshortsProvider(NewsProvider):
 
                     # ── Handle rate limit ──────────────────────────────────────
                     if response.status_code == 429:
-                        logger.warning("[Inshorts] Hit 429 rate limit.")
-                        self.mark_rate_limited()
+                        self.handle_429()
                         return []
 
                     # ── Handle non-200 responses ──────────────────────────────

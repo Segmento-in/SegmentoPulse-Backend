@@ -48,7 +48,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 from app.routes import news, search, analytics, subscription, admin, audio
 
 # Import scheduler functions
-from app.services.scheduler import start_scheduler, shutdown_scheduler
+from app.services.scheduler import start_scheduler, shutdown_scheduler, update_adaptive_intervals_from_redis
+
+# Import the worker manager
+from app.services.worker_manager import run_worker
 
 # Import the circuit breaker startup hook (loads Redis state after event loop is live)
 from app.services.circuit_breaker import startup_circuit_breaker
@@ -70,6 +73,11 @@ async def lifespan(app: FastAPI):
     print("🚀 Starting Segmento Pulse Backend...")
     start_scheduler()
 
+    # Phase 24: Start the Queue-Based Worker Manager
+    # This runs the consumer loop in the background, paced by Upstash Redis.
+    worker_task = asyncio.create_task(run_worker())
+    app.state.worker_task = worker_task
+
     # Fix 1: Load circuit breaker states from Redis NOW — the event loop is
     # fully alive at this point, so the async restore will actually run.
     await startup_circuit_breaker()
@@ -82,6 +90,15 @@ async def lifespan(app: FastAPI):
     # Shutdown: Stop background scheduler and browser
     print("=" * 60)
     print("👋 Shutting down Segmento Pulse Backend...")
+    
+    # Stop worker
+    if hasattr(app.state, "worker_task"):
+        app.state.worker_task.cancel()
+        try:
+            await app.state.worker_task
+        except asyncio.CancelledError:
+            pass
+
     shutdown_scheduler()
     await browser_manager.shutdown()
     print("=" * 60)

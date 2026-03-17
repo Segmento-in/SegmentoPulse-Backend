@@ -1,4 +1,4 @@
-"""
+```
 providers/base.py
 ─────────────────────────────────────────────────────────────────────────────
 The Foundation — every news provider in this system inherits from this file.
@@ -121,6 +121,10 @@ class NewsProvider(ABC):
         # Automatically takes the class name (e.g., "HackerNewsProvider").
         self.name: str = self.__class__.__name__
 
+        # ── Task 4: Adaptive Rate Limiting ──
+        self.retry_after: float = 0.0  # Timestamp until which the provider is blocked
+        self.backoff_count: int = 0    # Number of consecutive 429s (Too Many Requests)
+
     @abstractmethod
     async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:
         """
@@ -151,12 +155,39 @@ class NewsProvider(ABC):
 
         Returns False if:
           - It is currently rate-limited or in an error state.
+          - It is waiting out a 429 exponential backoff.
           - It has used up its daily API call limit.
         """
+        import time
+        if time.time() < self.retry_after:
+            return False
+
         return (
             self.status == ProviderStatus.ACTIVE
             and (self.daily_limit == 0 or self.request_count < self.daily_limit)
         )
+
+    def handle_429(self):
+        """
+        Task 4: Implement exponential backoff for 429 (Too Many Requests).
+        Instead of a generic 1-hour block, we pause for 30s, then 60s, then 120s...
+        This allows the system to recover 'politely' if it was hitting an accidental
+        rate limit spike, while still protecting our IP reputation.
+        """
+        import time
+        self.backoff_count += 1
+        
+        # Exponential Backoff Formula: 30 * (2 ^ (n-1))
+        # n=1 -> 30s
+        # n=2 -> 60s
+        # n=3 -> 120s
+        # n=4 -> 240s
+        # Capped at 3600s (1 hour) to ensure we eventually try again.
+        wait_time = min(30 * (2 ** (self.backoff_count - 1)), 3600)
+        
+        self.retry_after = time.time() + wait_time
+        self.status = ProviderStatus.RATE_LIMITED
+        print(f"⚠️  [BACKOFF] {self.name} hit 429. Backoff count: {self.backoff_count}. Sleeping for {wait_time}s.")
 
     def mark_rate_limited(self):
         """

@@ -93,7 +93,7 @@ logger = logging.getLogger(__name__)
 WEBZ_API_URL = "https://api.webz.io/newsApiLite"
 
 # Request timeout in seconds. Enterprise APIs are usually fast.
-HTTP_TIMEOUT_SECONDS = 12.0
+HTTP_TIMEOUT_SECONDS = 10.0
 
 # Articles to request per call. Keeping this modest saves the budget
 # because Webz deducts from quota based on results returned, not just calls.
@@ -274,8 +274,7 @@ class WebzProvider(NewsProvider):
 
                 # ── HTTP 429: Too many requests (short-term rate limit) ───
                 if response.status_code == 429:
-                    logger.warning("[Webz] HTTP 429 — request rate exceeded.")
-                    self.mark_rate_limited()
+                    self.handle_429()
                     return []
 
                 # ── Any other non-200 ─────────────────────────────────────

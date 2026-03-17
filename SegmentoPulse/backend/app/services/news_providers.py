@@ -22,6 +22,8 @@ class NewsProvider(ABC):
         self.request_count = 0
         self.daily_limit = 0
         self.name = self.__class__.__name__
+        self.retry_after = 0  # Timestamp until which the provider is blocked
+        self.backoff_count = 0  # Number of consecutive 429s
     
     @abstractmethod
     async def fetch_news(self, category: str, limit: int = 20) -> List[Article]:
@@ -30,10 +32,24 @@ class NewsProvider(ABC):
     
     def is_available(self) -> bool:
         """Check if provider is available"""
+        import time
+        if time.time() < self.retry_after:
+            return False
+
         return self.status == ProviderStatus.ACTIVE and (
             self.daily_limit == 0 or self.request_count < self.daily_limit
         )
     
+    def handle_429(self):
+        """Implement exponential backoff for 429 Too Many Requests"""
+        import time
+        self.backoff_count += 1
+        # Exponential backoff: 30s, 60s, 120s, 240s... max 1 hour
+        wait_time = min(30 * (2 ** (self.backoff_count - 1)), 3600)
+        self.retry_after = time.time() + wait_time
+        self.status = ProviderStatus.RATE_LIMITED
+        print(f"⚠️ [BACKOFF] {self.name} hit 429. Backoff count: {self.backoff_count}. Waiting {wait_time}s.")
+
     def mark_rate_limited(self):
         """Mark provider as rate limited"""
         self.status = ProviderStatus.RATE_LIMITED
@@ -121,8 +137,7 @@ class GNewsProvider(NewsProvider):
                 response = await client.get(url, params=params)
 
                 if response.status_code == 429:
-                    print("[WARN] [GNews] Rate limit hit! Switching to next provider...")
-                    self.mark_rate_limited()
+                    self.handle_429()
                     return []
 
                 if response.status_code == 200:
@@ -264,7 +279,7 @@ class NewsAPIProvider(NewsProvider):
                 response = await client.get(url, params=params)
 
                 if response.status_code == 429 or response.status_code == 426:
-                    self.mark_rate_limited()
+                    self.handle_429()
                     return []
 
                 if response.status_code == 200:
@@ -387,8 +402,7 @@ class NewsDataProvider(NewsProvider):
                 response = await client.get(url, params=params)
                 
                 if response.status_code == 429:
-                    print("[WARN] [NewsData] Rate limit hit! Switching to next provider...")
-                    self.mark_rate_limited()
+                    self.handle_429()
                     return []
                 
                 if response.status_code == 200:
@@ -476,8 +490,7 @@ class GoogleNewsRSSProvider(NewsProvider):
                 response = await client.get(feed_url)
                 
                 if response.status_code == 429:
-                    print("[WARN] [Google RSS] Rate limit hit! Trying next provider...")
-                    self.mark_rate_limited()
+                    self.handle_429()
                     return []
                 
                 if response.status_code == 200:
@@ -529,54 +542,47 @@ class MediumRSSProvider(NewsProvider):
         url = f"{self.base_url}/{tag}"
         
         try:
-            # use your existing RSSParser logic or lightweight local parsing
-            feed = feedparser.parse(url)
-            articles = []
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url, follow_redirects=True)
+                
+                if response.status_code == 429:
+                    self.handle_429()
+                    return []
+                
+                if response.status_code != 200:
+                    logger.warning(f"[Medium] HTTP {response.status_code} for tag {tag}")
+                    return []
+                
+                feed = feedparser.parse(response.text)
+                articles = []
+                
+                for entry in feed.entries:
+                    # image extraction...
+                    content_html = ''
+                    if hasattr(entry, 'content'):
+                        content_html = entry.content[0].value
+                    elif hasattr(entry, 'summary'):
+                         content_html = entry.summary
+                    
+                    image_url = self._extract_medium_image(content_html)
+                    
+                    article = Article(
+                        title=entry.get('title', 'Untitled'),
+                        description=self._clean_html(entry.get('summary', ''))[:200],
+                        url=entry.get('link', ''),
+                        image_url=image_url,
+                        published_at=self._parse_pub_date(entry.get('published')),
+                        source="Medium",
+                        category="medium-article"
+                    )
+                    articles.append(article)
+                    
+                print(f"[SUCCESS] [Medium] Fetched {len(articles)} for tag '{tag}'")
+                return articles
             
-            for entry in feed.entries:
-                # 1. Image Extraction (The Hard Part)
-                # Medium puts images in 'content' list with type 'text/html'
-                content_html = ''
-                if hasattr(entry, 'content'):
-                    content_html = entry.content[0].value
-                elif hasattr(entry, 'summary'):
-                     content_html = entry.summary
-                
-                image_url = self._extract_medium_image(content_html)
-                
-                # 2. Author Extraction
-                author = entry.get('dc_creator', 'Medium Writer')
-                
-                # 3. Create Article Object
-                article = Article(
-                    title=entry.get('title', 'Untitled'),
-                    description=self._clean_html(entry.get('summary', ''))[:200],
-                    url=entry.get('link', ''),
-                    image_url=image_url,
-                    # Medium pub date format
-                    published_at=self._parse_pub_date(entry.get('published')),
-                    source="Medium",
-                    category="medium-article", # FORCE separation to prevent leakage
-                    # author=author # Article model might not have author, check field
-                )
-                
-                # Check if Article model accepts author, if not, skip or put in description
-                # Assuming Article model has optional author based on previous context
-                # If not, remove it. Looking at models.py would be safe, but I'll assume standard 
-                # or just set it if kwargs allow. 
-                # To be safe against strict Pydantic, let's look at `app/models.py` or just verify previous code.
-                # In Step 486, Article is imported.
-                # Let's check GNewsProvider usage: 
-                # Article(..., source=..., category=...)
-                # It doesn't use author.
-                # So I should PROBABLY NOT pass author unless I added it.
-                # I will remove author for safety to prevent TypeError.
-                
-                articles.append(article)
-                
-            print(f"[SUCCESS] [Medium] Fetched {len(articles)} for tag '{tag}'")
-            return articles
-            
+        except httpx.TimeoutException:
+            logger.warning(f"[Medium] Timed out for tag {tag}")
+            return []
         except Exception as e:
             print(f"[ERROR] [Medium] Error fetching {tag}: {e}")
             return []
@@ -660,8 +666,12 @@ class OfficialCloudProvider(NewsProvider):
             from app.services.rss_parser import RSSParser
             parser = RSSParser()
             
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(rss_url, follow_redirects=True)
+
+                if response.status_code == 429:
+                    self.handle_429()
+                    return []
                 
                 if response.status_code == 200:
                     # Parse using the generic provider parser

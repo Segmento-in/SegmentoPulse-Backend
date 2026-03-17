@@ -83,7 +83,7 @@ TECH_RSS_FEEDS: List[tuple] = [
 MAX_ARTICLES_PER_FEED = 10
 
 # How long (in seconds) to wait for a feed to respond before giving up.
-HTTP_TIMEOUT_SECONDS = 12.0
+HTTP_TIMEOUT_SECONDS = 10.0
 
 
 class DirectRSSProvider(NewsProvider):
@@ -265,6 +265,10 @@ class DirectRSSProvider(NewsProvider):
                 headers={"User-Agent": "SegmentoPulse-RSS-Reader/1.0"},
                 follow_redirects=True,
             )
+
+            if response.status_code == 429:
+                self.handle_429()
+                return []
 
             if response.status_code != 200:
                 logger.warning(
