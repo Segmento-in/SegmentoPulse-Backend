@@ -6,7 +6,7 @@ Handles article likes, views tracking, and trending articles
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from pydantic import BaseModel
-from app.services.appwrite_db import get_appwrite_db
+from app.services.appwrite_db import get_appwrite_db, _safe_get
 from app.config import settings
 from app.utils.id_generator import generate_article_id
 from datetime import datetime, timedelta
@@ -431,7 +431,7 @@ async def get_trending_articles(
             ]
         )
         
-        articles = response['documents']
+        articles = _safe_get(response, 'documents', [])
         
         # Calculate engagement score (views + likes * 5 - dislikes * 3)
         # Likes are weighted higher, dislikes have negative impact
@@ -495,7 +495,7 @@ async def get_popular_cloud_articles(provider: Optional[str] = None, limit: int 
             queries=queries
         )
         
-        articles = response['documents']
+        articles = _safe_get(response, 'documents', [])
         
         logger.info(f"☁️  Popular cloud articles: {len(articles)} (provider={provider or 'all'})")
         
