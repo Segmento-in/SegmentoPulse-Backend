@@ -37,6 +37,26 @@ from app.utils.custom_logger import get_logger, TAG_DB, TAG_ERROR
 logger = get_logger(__name__)
 
 
+def _safe_get(response, key: str, default=None):
+    """
+    SDK Compatibility Helper: Access response properties safely.
+    
+    Appwrite SDK <v6 returns plain dicts   → response['documents']
+    Appwrite SDK  v7+ returns typed objects → response.documents
+    
+    This helper works with both, preventing:
+      'DocumentList' object is not subscriptable
+    """
+    # 1. Try attribute access first (new SDK typed objects)
+    val = getattr(response, key, None)
+    if val is not None:
+        return val
+    # 2. Fall back to dict-style access (old SDK / plain dicts)
+    if isinstance(response, dict):
+        return response.get(key, default)
+    return default
+
+
 class TablesDBWrapper:
     """
     Future-Proofing Wrapper (Migration Phase)
@@ -243,7 +263,7 @@ class AppwriteDatabase:
             
             # Convert Appwrite documents to Article dictionaries
             articles = []
-            for doc in response['documents']:
+            for doc in _safe_get(response, 'documents', []):
                 try:
                     # Smart Mapping for Research Papers
                     description = doc.get('description', '')
@@ -333,7 +353,7 @@ class AppwriteDatabase:
             
             # Convert to article dictionaries
             articles = []
-            for doc in response['documents']:
+            for doc in _safe_get(response, 'documents', []):
                 try:
                     article = {
                         '$id': doc.get('$id'),
@@ -562,7 +582,7 @@ class AppwriteDatabase:
             )
             
             deleted_count = 0
-            for doc in response['documents']:
+            for doc in _safe_get(response, 'documents', []):
                 try:
                     await self.tablesDB.delete_row(
                         database_id=settings.APPWRITE_DATABASE_ID,
@@ -918,7 +938,7 @@ class AppwriteDatabase:
                 collection_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[Query.limit(1)]
             )
-            total_articles = total_response['total']
+            total_articles = _safe_get(total_response, 'total', 0)
             
             # Get counts by category
             categories = [
@@ -938,7 +958,7 @@ class AppwriteDatabase:
                         Query.limit(1)
                     ]
                 )
-                articles_by_category[category] = response['total']
+                articles_by_category[category] = _safe_get(response, 'total', 0)
             
             return {
                 "total_articles": total_articles,

@@ -15,7 +15,7 @@ from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import logging
 
-from app.services.appwrite_db import get_appwrite_db
+from app.services.appwrite_db import get_appwrite_db, _safe_get
 from app.services.cache_service import CacheService
 from app.config import settings
 
@@ -118,7 +118,7 @@ class OptimizedRetrieval:
             
             # Manual projection to reduce payload size
             projected = []
-            for doc in response['documents']:
+            for doc in _safe_get(response, 'documents', []):
                 projected.append({
                     '$id': doc['$id'],
                     'title': doc.get('title', ''),

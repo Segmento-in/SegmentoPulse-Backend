@@ -11,7 +11,7 @@ import logging
 import pytz
 
 from app.services.news_aggregator import NewsAggregator
-from app.services.appwrite_db import get_appwrite_db
+from app.services.appwrite_db import get_appwrite_db, _safe_get
 from app.services.cache_service import CacheService
 from app.services.upstash_cache import get_upstash_cache   # Needed to bust stale news_v3 keys
 from app.services.adaptive_scheduler import get_adaptive_scheduler, AdaptiveScheduler
@@ -621,7 +621,7 @@ async def cleanup_old_news():
                     ]
                 )
                 
-                if len(check_response['documents']) == 0:
+                if len(_safe_get(check_response, 'documents', [])) == 0:
                     logger.info(f"✨ [{name}] Collection is clean (Smart Check Passed)")
                     continue
                     
@@ -643,7 +643,7 @@ async def cleanup_old_news():
                         ]
                     )
                     
-                    batch_count = len(response['documents'])
+                    batch_count = len(_safe_get(response, 'documents', []))
                     
                     if batch_count == 0:
                         logger.info(f"✅ [{name}] Cleanup complete. Total rows deleted: {total_collection_deleted}")
@@ -652,7 +652,7 @@ async def cleanup_old_news():
                     logger.info(f"   [{name}] processing batch of {batch_count} rows...")
                     
                     batch_deleted = 0
-                    for doc in response['documents']:
+                    for doc in _safe_get(response, 'documents', []):
                         try:
                             # This deletes the FULL DOCUMENT (Row) including all attributes
                             # (published_at, url, image, likes, views, dislikes, etc.)
