@@ -136,7 +136,7 @@ async def get_newsletter_content(preference: str) -> List[Dict]:
         limit = 10 if preference in ["Weekly", "Monthly"] else config["max_articles"]
         
         queries = [
-            Query.greater_than_equal('published_at', start_utc.isoformat()),
+            Query.greater_than('published_at', start_utc.isoformat()),
             Query.less_than_equal('published_at', end_utc.isoformat()),
             Query.order_desc('published_at'), # Default sort by recency
             Query.limit(limit)

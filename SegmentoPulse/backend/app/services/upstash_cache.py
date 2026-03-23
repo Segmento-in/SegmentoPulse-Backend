@@ -79,17 +79,18 @@ class UpstashCache:
             logger.info(f"   Free Tier: 256 MB data, 50 GB/month bandwidth")
             logger.info("=" * 70)
             
-    def _get_client(self) -> httpx.AsyncClient:
-        """Lazy initialization of httpx client to avoid asyncio loop issues on Windows"""
-        if not hasattr(self, '_client') or self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=5.0,  # 5 second timeout
-                headers={
-                    "Authorization": f"Bearer {self.rest_token}",
-                    "Content-Type": "application/json"
-                }
-            )
-        return self._client
+    def _get_client_kwargs(self) -> dict:
+        """Return kwargs for creating a new httpx.AsyncClient"""
+        return {
+            "timeout": 5.0,  # 5 second timeout
+            "headers": {
+                "Authorization": f"Bearer {self.rest_token}",
+                "Content-Type": "application/json"
+            }
+        }
+    
+    # Dedicated executor to avoid Python 3.14 asyncio shutdown crashes
+    executor = __import__('concurrent.futures').futures.ThreadPoolExecutor(max_workers=10)
     
     async def _execute_command(self, command: list) -> Optional[Any]:
         """
@@ -105,11 +106,23 @@ class UpstashCache:
             return None
         
         try:
-            client = self._get_client()
-            response = await client.post(
-                f"{self.rest_url}",
-                json=command
-            )
+            import asyncio
+            import requests
+            
+            def _sync_request():
+                response = requests.post(
+                    self.rest_url,
+                    json=command,
+                    headers={
+                        "Authorization": f"Bearer {self.rest_token}",
+                        "Content-Type": "application/json"
+                    },
+                    timeout=5.0
+                )
+                return response
+            
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(self.executor, _sync_request)
             
             if response.status_code == 200:
                 result = response.json()
@@ -370,9 +383,8 @@ class UpstashCache:
             return False
     
     async def close(self):
-        """Close HTTP client"""
-        if hasattr(self, '_client') and self._client is not None:
-            await self._client.aclose()
+        """Close HTTP client - No-op since we use per-request clients now"""
+        pass
 
 
 # Global singleton instance

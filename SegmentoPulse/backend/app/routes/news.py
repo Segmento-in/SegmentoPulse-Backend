@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.models import NewsResponse, ErrorResponse
 from app.services.news_aggregator import NewsAggregator
 from app.services.upstash_cache import get_upstash_cache  # New Upstash cache
-from app.services.appwrite_db import get_appwrite_db
+from app.services.appwrite_db import get_appwrite_db, _safe_get
 import logging
 
 # Configure logger
@@ -119,8 +119,8 @@ async def get_news_by_category(
             if has_more and articles:
                 last_article = articles[-1]
                 next_cursor = CursorPagination.encode_cursor(
-                    last_article.get('publishedAt') or last_article.get('published_at'),
-                    last_article.get('$id')
+                    _safe_get(last_article, 'publishedAt', _safe_get(last_article, 'published_at')),
+                    _safe_get(last_article, '$id')
                 )
         
         response_data = NewsResponse(

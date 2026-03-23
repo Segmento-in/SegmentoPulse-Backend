@@ -659,11 +659,11 @@ async def cleanup_old_news():
                             await appwrite_db.tablesDB.delete_row(
                                 database_id=settings.APPWRITE_DATABASE_ID,
                                 collection_id=collection_id,
-                                document_id=doc['$id']
+                                document_id=_safe_get(doc, '$id')
                             )
                             batch_deleted += 1
                         except Exception as e:
-                            logger.error(f"❌ Error deleting row {doc['$id']}: {e}")
+                            logger.error(f"❌ Error deleting row {_safe_get(doc, '$id')}: {e}")
                             
                     total_collection_deleted += batch_deleted
                     total_deleted += batch_deleted
@@ -753,9 +753,9 @@ async def background_image_enricher_job():
                 ]
             )
             
-            docs = response.get('documents', [])
+            docs = _safe_get(response, 'documents', [])
             # Pick max 10 to avoid scraping too intensely in background
-            empty_docs = [d for d in docs if not d.get('image_url') and not d.get('image')][:10]
+            empty_docs = [d for d in docs if not _safe_get(d, 'image_url') and not _safe_get(d, 'image')][:10]
             
             if not empty_docs:
                 continue
@@ -765,9 +765,14 @@ async def background_image_enricher_job():
             articles_to_enrich = []
             for doc in empty_docs:
                 try:
-                    doc_copy = dict(doc)
-                    if '$id' in doc_copy:
-                        doc_copy['id'] = doc_copy['$id']
+                    # Robust doc attributes extraction
+                    doc_copy = dict(doc) if isinstance(doc, dict) else {k: getattr(doc, k) for k in dir(doc) if not k.startswith('_')}
+                    
+                    # Ensure ID mapping fits Article model
+                    doc_id = _safe_get(doc, '$id')
+                    if doc_id:
+                        doc_copy['id'] = doc_id
+                        
                     art = Article(**doc_copy)
                     articles_to_enrich.append(art)
                 except Exception as e:

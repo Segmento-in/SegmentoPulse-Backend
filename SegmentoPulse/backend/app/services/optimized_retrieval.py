@@ -101,6 +101,7 @@ class OptimizedRetrieval:
         Fetch articles from Appwrite with ONLY the fields needed for list view.
         """
         from appwrite.query import Query
+        from app.utils.cursor_pagination import CursorPagination
         
         collection_id = self._get_collection_for_category(category)
         
@@ -120,15 +121,15 @@ class OptimizedRetrieval:
             projected = []
             for doc in _safe_get(response, 'documents', []):
                 projected.append({
-                    '$id': doc['$id'],
-                    'title': doc.get('title', ''),
-                    'url': doc.get('url', ''),
-                    'image': doc.get('image', ''),
-                    'published_at': doc.get('published_at', ''),
-                    'category': doc.get('category', category),
-                    'likes': doc.get('likes', 0),
-                    'views': doc.get('views', 0),
-                    'source': doc.get('source', ''),
+                    '$id': _safe_get(doc, '$id'),
+                    'title': _safe_get(doc, 'title', ''),
+                    'url': _safe_get(doc, 'url', ''),
+                    'image': _safe_get(doc, 'image', _safe_get(doc, 'image_url', '')),
+                    'published_at': _safe_get(doc, 'published_at', ''),
+                    'category': _safe_get(doc, 'category', category),
+                    'likes': _safe_get(doc, 'likes', 0),
+                    'views': _safe_get(doc, 'views', 0),
+                    'source': _safe_get(doc, 'source', ''),
                     # Exclude: description (heavy), content (very heavy), tags
                 })
             
@@ -198,17 +199,43 @@ class OptimizedRetrieval:
             logger.debug(f"Background refresh failed: {e}")
     
     def _get_collection_for_category(self, category: str) -> str:
-        """Determine which collection to query."""
-        cloud_categories = [
-            "cloud-aws", "cloud-azure", "cloud-gcp", "cloud-oracle",
-            "cloud-ibm", "cloud-alibaba", "cloud-digitalocean",
-            "cloud-huawei", "cloud-cloudflare", "cloud-computing"
-        ]
+        """
+        Determine which Appwrite collection to query.
         
-        if category in cloud_categories and settings.APPWRITE_CLOUD_COLLECTION_ID:
-            return settings.APPWRITE_CLOUD_COLLECTION_ID
-        else:
+        CRITICAL: Must mirror AppwriteDatabase.get_collection_id() exactly
+        so that the data routed at write-time is found at read-time.
+        """
+        if not category or not category.strip():
             return settings.APPWRITE_COLLECTION_ID
+
+        cat = category.lower().strip()
+
+        # 1. AI Vertical
+        if cat == 'ai':
+            return settings.APPWRITE_AI_COLLECTION_ID
+
+        # 2. Cloud Vertical (all sub-verticals prefixed with 'cloud-')
+        if cat.startswith('cloud-'):
+            return settings.APPWRITE_CLOUD_COLLECTION_ID
+
+        # 3. Research Vertical
+        if cat == 'research' or cat.startswith('research-'):
+            return settings.APPWRITE_RESEARCH_COLLECTION_ID
+
+        # 4. Data Vertical (data-*, business-*, customer-data-platform)
+        if cat.startswith('data-') or cat.startswith('business-') or cat == 'customer-data-platform':
+            return settings.APPWRITE_DATA_COLLECTION_ID
+
+        # 5. Magazines
+        if cat == 'magazines':
+            return settings.APPWRITE_MAGAZINE_COLLECTION_ID
+
+        # 6. Medium Articles
+        if cat == 'medium-article':
+            return settings.APPWRITE_MEDIUM_COLLECTION_ID
+
+        # Default / Fallback
+        return settings.APPWRITE_COLLECTION_ID
     
     def invalidate_category_cache(self, category: str):
         """
