@@ -37,24 +37,40 @@ from app.utils.custom_logger import get_logger, TAG_DB, TAG_ERROR
 logger = get_logger(__name__)
 
 
-def _safe_get(response, key: str, default=None):
+def _safe_get(data, key, default=None):
     """
-    SDK Compatibility Helper: Access response properties safely.
-    
-    Appwrite SDK <v6 returns plain dicts   → response['documents']
-    Appwrite SDK  v7+ returns typed objects → response.documents
-    
-    This helper works with both, preventing:
-      'DocumentList' object is not subscriptable
+    Robust attribute/key getter for Appwrite SDK responses.
+    Handles:
+    1. Plain dictionaries (standard .get)
+    2. SDK Objects (getattr access)
+    3. Automatic aliasing of '$id' <-> 'id'
+    4. Data is None/Empty safety
     """
-    # 1. Try attribute access first (new SDK typed objects)
-    val = getattr(response, key, None)
-    if val is not None:
-        return val
-    # 2. Fall back to dict-style access (old SDK / plain dicts)
-    if isinstance(response, dict):
-        return response.get(key, default)
-    return default
+    if data is None:
+        return default
+    
+    # CASE 1: Data is a dictionary
+    if isinstance(data, dict):
+        # Specific fix for $id to id mapping for dicts
+        if key == 'id' and 'id' not in data and '$id' in data:
+            return data.get('$id')
+        if key == '$id' and '$id' not in data and 'id' in data:
+            return data.get('id')
+        return data.get(key, default)
+    
+    # CASE 2: Data is an object (SDK Response object)
+    # Important: SDK v14 DocumentList has .documents and .total
+    # Article objects have .id or .$id
+    val = getattr(data, key, None)
+    
+    # Mirror mapping for objects
+    if val is None:
+        if key == 'id':
+            val = getattr(data, '$id', None)
+        elif key == '$id':
+            val = getattr(data, 'id', None)
+            
+    return val if val is not None else default
 
 
 class TablesDBWrapper:
@@ -66,19 +82,23 @@ class TablesDBWrapper:
         self.db = db_service
     
     async def create_row(self, *args, **kwargs):
+        # Appwrite SDK natively maps to `create_document`
         return await asyncio.to_thread(self.db.create_document, *args, **kwargs)
         
     async def get_row(self, *args, **kwargs):
+        # Appwrite SDK natively maps to `get_document`
         return await asyncio.to_thread(self.db.get_document, *args, **kwargs)
     
     async def list_rows(self, *args, **kwargs):
+        # Appwrite SDK natively maps to `list_documents`
         return await asyncio.to_thread(self.db.list_documents, *args, **kwargs)
 
     async def delete_row(self, *args, **kwargs):
-            # Mapping delete_document -> delete_row if needed
+        # Appwrite SDK natively maps to `delete_document`
         return await asyncio.to_thread(self.db.delete_document, *args, **kwargs)
 
     async def update_row(self, *args, **kwargs):
+        # Appwrite SDK natively maps to `update_document`
         return await asyncio.to_thread(self.db.update_document, *args, **kwargs)
 
 
@@ -259,7 +279,7 @@ class AppwriteDatabase:
                 queries=queries
             )
             
-            print(f"[DEBUG] Appwrite Raw Response: Total={response.get('total')}, Docs={len(response.get('documents', []))}")
+            print(f"[DEBUG] Appwrite Raw Response: Total={_safe_get(response, 'total')}, Docs={len(_safe_get(response, 'documents', []))}")
             
             # Convert Appwrite documents to Article dictionaries
             articles = []
@@ -671,8 +691,8 @@ class AppwriteDatabase:
                 queries=[Query.equal("email", email)]
             )
             
-            if documents['total'] > 0:
-                return documents['documents'][0]
+            if _safe_get(documents, 'total', 0) > 0:
+                return _safe_get(documents, 'documents', [])[0]
             return None
             
         except Exception as e:
@@ -690,7 +710,7 @@ class AppwriteDatabase:
             if not subscriber:
                 return False
             
-            doc_id = subscriber['$id']
+            doc_id = _safe_get(subscriber, '$id')
             
             # 2. Prepare update data
             data = {}
@@ -723,8 +743,8 @@ class AppwriteDatabase:
                 queries=[Query.equal("token", token)]
             )
             
-            if documents['total'] > 0:
-                return documents['documents'][0]
+            if _safe_get(documents, 'total', 0) > 0:
+                return _safe_get(documents, 'documents', [])[0]
             return None
             
         except Exception as e:
@@ -783,7 +803,7 @@ class AppwriteDatabase:
             await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=subscriber['$id'],
+                document_id=_safe_get(subscriber, '$id'),
                 data=data
             )
             logger.info(f"✅ [Appwrite] Updated {preference} for {email} to {is_active}")
@@ -810,7 +830,7 @@ class AppwriteDatabase:
             await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=subscriber['$id'],
+                document_id=_safe_get(subscriber, '$id'),
                 data=data
             )
             logger.info(f"✅ [Appwrite] Global status for {email} set to {subscribed}")
@@ -841,7 +861,7 @@ class AppwriteDatabase:
             await self.tablesDB.update_row(
                 database_id=settings.APPWRITE_DATABASE_ID,
                 collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=subscriber['$id'],
+                document_id=_safe_get(subscriber, '$id'),
                 data={'lastSentAt': utc_now}
             )
             # logger.debug(f"✅ [Appwrite] Updated lastSentAt for {email}")
@@ -892,7 +912,7 @@ class AppwriteDatabase:
                 ]
             )
             
-            subs = documents['documents']
+            subs = _safe_get(documents, 'documents', [])
             logger.info(f"✅ [Appwrite] Found {len(subs)} subscribers for {preference}")
             return subs
             

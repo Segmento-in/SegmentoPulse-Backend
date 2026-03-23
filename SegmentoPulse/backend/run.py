@@ -15,10 +15,9 @@ if __name__ == "__main__":
     # and Uvicorn's reloader messes this up.
     uvicorn.run(
         "app.main:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=8000,
-        reload=False, 
-        workers=1,
+        reload=False,
         loop="asyncio",
         log_level="info"
     )

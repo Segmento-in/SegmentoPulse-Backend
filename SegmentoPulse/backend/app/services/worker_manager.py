@@ -153,12 +153,8 @@ class WorkerManager:
             logger.error("❌ [REAPER] Error: %s", reaper_err)
 
 async def run_worker():
+    """Main entry point for the worker process"""
     worker = WorkerManager()
-    
-    # Handle shutdown signals
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, worker.stop)
-    
     await worker.start()
 
 if __name__ == "__main__":

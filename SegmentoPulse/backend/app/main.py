@@ -75,6 +75,16 @@ async def lifespan(app: FastAPI):
 
     # Phase 24: Start the Queue-Based Worker Manager
     # This runs the consumer loop in the background, paced by Upstash Redis.
+    
+    # CRITICAL FIX for "unknown async library" in all background httpx fetchers
+    # `nest_asyncio` patches internal asyncio loop vars, which breaks `sniffio` / `anyio` 
+    # context detection used by httpx. We manually force it here.
+    try:
+        import sniffio
+        sniffio.current_async_library_cvar.set("asyncio")
+    except ImportError:
+        pass
+        
     worker_task = asyncio.create_task(run_worker())
     app.state.worker_task = worker_task
 
