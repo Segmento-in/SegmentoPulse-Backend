@@ -55,7 +55,8 @@ class BrowserManager:
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage', # Overcome limited /dev/shm size
-                    '--disable-gpu' # Not needed for headless
+                    '--disable-gpu', # Not needed for headless
+                    '--single-process' # Required for memory compliance
                 ]
             )
             logger.info("Global Browser Instance Started successfully")
