@@ -7,6 +7,7 @@ import asyncio
 import logging
 import random
 import signal
+import gc
 from datetime import datetime
 
 from app.services.upstash_cache import get_upstash_cache
@@ -65,22 +66,20 @@ class WorkerManager:
                 # 3. Process the category
                 logger.info("🎯 [WORKER] Processing task from queue: %s", category.upper())
                 
+                success = False
                 try:
                     success = await process_category(category, self.aggregator)
                 except Exception as proc_err:
                     logger.error("❌ [WORKER] Task failed: %s. Moving to DLQ.", category)
                     await self.upstash.lpush(self.dlq, f"{category} | {datetime.now().isoformat()} | {str(proc_err)}")
-                    success = False
-
-                if success:
-                    # 4. Cleanup: Task finished successfully
+                finally:
+                    # 4. Cleanup: Task ALWAYS removed from processing queue and visibility map
                     await self.upstash.lrem(self.processing_queue, 1, category)
                     await self.upstash._execute_command(["HDEL", self.visibility_map, category])
-                    logger.info("✅ [WORKER] Task completed and cleaned: %s", category.upper())
-                else:
-                    # If process_category failed, it's already in DLQ or re-queued by Reaper
-                    await self.upstash.lrem(self.processing_queue, 1, category)
-                    await self.upstash._execute_command(["HDEL", self.visibility_map, category])
+                    if success:
+                        logger.info("✅ [WORKER] Task completed and cleaned: %s", category.upper())
+                    else:
+                        logger.warning("⚠️ [WORKER] Task cleaned from queue after failure: %s", category.upper())
 
                 # 5. Mandatory spacing + Adaptive Backoff
                 # We check if many providers are currently "Open" (tripped)
@@ -112,6 +111,9 @@ class WorkerManager:
                 logger.error("❌ [WORKER] Fatal error in consumer loop: %s", e)
                 # Should we move to DLQ? In Task 5 we will implement the Reaper.
                 await asyncio.sleep(30) # Backoff on error
+            finally:
+                # Explicit garbage collection per worker cycle (OOM Fix)
+                gc.collect()
 
     def stop(self, *args):
         logger.info("👷 [WORKER] Stopping gracefully...")

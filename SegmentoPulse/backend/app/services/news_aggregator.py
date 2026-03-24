@@ -219,7 +219,8 @@ class NewsAggregator:
         import random
         import logging
         logger = logging.getLogger(__name__)
-        startup_jitter = random.uniform(1.0, 3.0)
+        # Increased JITTER for Hugging Face Anti-Ban compliance
+        startup_jitter = random.uniform(3.0, 8.0)
         logger.info("🎲 [JITTER] Worker start-up jitter: sleeping for %.2fs...", startup_jitter)
         await asyncio.sleep(startup_jitter)
 
@@ -264,7 +265,8 @@ class NewsAggregator:
                 # If this isn't the first provider in the loop, wait a bit
                 # to avoid hitting multiple paid providers in rapid succession.
                 if paid_success: # only if we are still in the loop after a fail
-                   intra_delay = random.uniform(0.2, 0.7)
+                   # Increased for HF anti-ban
+                   intra_delay = random.uniform(1.5, 3.5)
                    await asyncio.sleep(intra_delay)
 
                 print(f"[PAID]    [{provider_name.upper()}] Fetching '{category}'...")
@@ -369,7 +371,8 @@ class NewsAggregator:
             # To prevent parallel tasks from hitting the same shared IP outbound
             # gate simultaneously, we wrap each task in a small jittered wrapper.
             async def _jittered_fetch(name, task):
-                delay = random.uniform(0.1, 0.5)
+                # Increased delay to avoid Hugging Face burst bans
+                delay = random.uniform(1.0, 3.0)
                 await asyncio.sleep(delay)
                 return await task
 
@@ -378,8 +381,15 @@ class NewsAggregator:
                 for name, task in zip(free_names, free_tasks)
             ]
 
-            print(f"[FREE]    Launching {len(free_tasks)} free source(s) with jitter in parallel for '{category}'...")
-            free_results = await asyncio.gather(*jittered_tasks, return_exceptions=True)
+            print(f"[FREE]    Launching {len(free_tasks)} free source(s) in batches of 2 for '{category}' to prevent OOM...")
+            free_results = []
+            for i in range(0, len(jittered_tasks), 2):
+                batch = jittered_tasks[i:i+2]
+                # Slight extra jitter between batches to avoid HF bans
+                if i > 0:
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
+                batch_results = await asyncio.gather(*batch, return_exceptions=True)
+                free_results.extend(batch_results)
 
             for name, result in zip(free_names, free_results):
                 if isinstance(result, Exception):
