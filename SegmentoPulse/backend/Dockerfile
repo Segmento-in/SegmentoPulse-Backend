@@ -23,7 +23,6 @@ COPY app ./app
 # Copy env file (fallback — HF Secrets override these at runtime)
 # Note: In production on HF Spaces, set all vars in the Secrets UI instead.
 # This .env is a local fallback for the Docker image.
-COPY .env .env
 
 # Expose Hugging Face Spaces default port
 EXPOSE 7860
