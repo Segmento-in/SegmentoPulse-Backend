@@ -171,7 +171,7 @@ async def like_article(article_id: str, request: EngagementRequest = None):
             data={"likes": new_likes}
         )
         
-        logger.info(f"Article {doc_id[:8]}... liked (total: {new_likes})")
+        logger.info(f"❤️  Article {doc_id[:8]}... liked (total: {new_likes})")
         
         return {
             "article_id": doc_id,
@@ -230,7 +230,7 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
         
         final_dislikes = _safe_get(updated_doc, 'dislike', new_dislikes)
         
-        logger.info(f"Article {doc_id[:8]}... disliked (total: {final_dislikes})")
+        logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {final_dislikes})")
         
         return {
             "article_id": doc_id,
