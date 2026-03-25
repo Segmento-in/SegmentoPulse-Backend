@@ -17,11 +17,18 @@ class Settings(BaseSettings):
     
     # CORS - Supports both production and local development
     CORS_ORIGINS: List[str] = [
-        "https://segmento.in",      # Production frontend
-        "http://localhost:3000",    # Local dev frontend
-        "http://127.0.0.1:3000",     # Alternative local dev
-        "http://localhost:3001",    # Local dev frontend
-        "http://127.0.0.1:3001"     # Alternative local dev
+        "https://segmento.in",                         # Production frontend (Main)
+        "https://www.segmento.in",                     # Production frontend (www)
+        "https://shafisk17-pulse-backend.hf.space",    # HF Spaces backend itself (health checks)
+        "https://shafisk17-pulse-frontend.hf.space",   # HF Spaces frontend (if any)
+        "https://segmento-pulse.vercel.app",           # Vercel pulse frontend
+        "https://segmento-frontend.vercel.app",        # Vercel sense/pulse shared frontend
+        "http://localhost:3000",                       # Local dev
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:5173",                       # Vite dev server
+        "http://127.0.0.1:5173",
     ]
     
     # News API
