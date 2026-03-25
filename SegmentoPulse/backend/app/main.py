@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     """
     # Startup: Start background scheduler and browser
     print("=" * 60)
-    print("🚀 Starting Segmento Pulse Backend...")
+    print("Starting Segmento Pulse Backend...")
     start_scheduler()
 
     # Phase 24: Start the Queue-Based Worker Manager
@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown: Stop background scheduler and browser
     print("=" * 60)
-    print("👋 Shutting down Segmento Pulse Backend...")
+    print("Shutting down Segmento Pulse Backend...")
     
     # Stop worker
     if hasattr(app.state, "worker_task"):
@@ -191,9 +191,13 @@ async def root():
         if upcoming:
             next_news_run = min(upcoming).isoformat()
 
-    # ── Appwrite health ───────────────────────────────────────────────────────
+    # -- Appwrite health -------------------------------------------------------
     db = get_appwrite_db()
     appwrite_ok = db.initialized if db else False
+    
+    # DEBUG: Log the actual state to server terminal
+    from app.services.appwrite_db import APPWRITE_AVAILABLE
+    logger.info(f"Health Check - Appwrite OK: {appwrite_ok} (SDK Available: {APPWRITE_AVAILABLE})")
 
     # ── Redis health (lightweight — just check circuit breaker import) ────────
     redis_ok = False
