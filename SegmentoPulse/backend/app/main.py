@@ -19,6 +19,9 @@ if not root_logger.handlers:
     root_logger.addHandler(handler)
 root_logger.setLevel(logging.INFO)
 
+# Module-level logger for use in route handlers (e.g. root health check)
+logger = logging.getLogger(__name__)
+
 
 # Windows-specific fix for Playwright + asyncio subprocesses
 if sys.platform == 'win32':
