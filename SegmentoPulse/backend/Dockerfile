@@ -4,7 +4,6 @@ FROM mcr.microsoft.com/playwright/python:v1.41.0-jammy
 WORKDIR /app
 
 # Install system dependencies
-# Playwright image already has browsers, but might need basic build tools for some python packages
 RUN apt-get update && apt-get install -y \
     gcc \
     build-essential \
@@ -15,15 +14,19 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install Python dependencies
-# Use --no-cache-dir to keep image small
 RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 
 # Copy application code
 COPY app ./app
 
+# Copy env file (fallback — HF Secrets override these at runtime)
+# Note: In production on HF Spaces, set all vars in the Secrets UI instead.
+# This .env is a local fallback for the Docker image.
+COPY .env .env
+
 # Expose Hugging Face Spaces default port
 EXPOSE 7860
 
 # Run application on port 7860 (HF Spaces standard)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860", "--log-level", "info"]
