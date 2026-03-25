@@ -612,16 +612,15 @@ async def cleanup_old_news():
                 # -------------------------------------------------------------
                 # 1. SMART CHECK: "Hey collection, do you have old data?"
                 # -------------------------------------------------------------
-                check_response = await appwrite_db.tablesDB.list_rows(
-                    database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=collection_id,
+                check_response = await appwrite_db.list_rows(
+                    table_id=collection_id,
                     queries=[
                         Query.less_than('published_at', cutoff_iso),
                         Query.limit(1)  # Minimal query to check existence
                     ]
                 )
                 
-                if len(_safe_get(check_response, 'documents', [])) == 0:
+                if len(_safe_get(check_response, 'rows', [])) == 0:
                     logger.info(f"✨ [{name}] Collection is clean (Smart Check Passed)")
                     continue
                     
@@ -634,16 +633,15 @@ async def cleanup_old_news():
                 
                 while True:
                     # Query old articles (Batch of 500)
-                    response = await appwrite_db.tablesDB.list_rows(
-                        database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=collection_id,
+                    response = await appwrite_db.list_rows(
+                        table_id=collection_id,
                         queries=[
                             Query.less_than('published_at', cutoff_iso),
                             Query.limit(500)
                         ]
                     )
                     
-                    batch_count = len(_safe_get(response, 'documents', []))
+                    batch_count = len(_safe_get(response, 'rows', []))
                     
                     if batch_count == 0:
                         logger.info(f"✅ [{name}] Cleanup complete. Total rows deleted: {total_collection_deleted}")
@@ -652,14 +650,13 @@ async def cleanup_old_news():
                     logger.info(f"   [{name}] processing batch of {batch_count} rows...")
                     
                     batch_deleted = 0
-                    for doc in _safe_get(response, 'documents', []):
+                    for doc in _safe_get(response, 'rows', []):
                         try:
                             # This deletes the FULL DOCUMENT (Row) including all attributes
                             # (published_at, url, image, likes, views, dislikes, etc.)
-                            await appwrite_db.tablesDB.delete_row(
-                                database_id=settings.APPWRITE_DATABASE_ID,
-                                collection_id=collection_id,
-                                document_id=_safe_get(doc, '$id')
+                            await appwrite_db.delete_row(
+                                table_id=collection_id,
+                                row_id=_safe_get(doc, '$id')
                             )
                             batch_deleted += 1
                         except Exception as e:
@@ -744,16 +741,15 @@ async def background_image_enricher_job():
                 continue
                 
             # Fetch 50 recent articles and locally filter for empty images
-            response = await appwrite_db.tablesDB.list_rows(
-                database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=collection_id,
+            response = await appwrite_db.list_rows(
+                table_id=collection_id,
                 queries=[
                     Query.order_desc('published_at'),
                     Query.limit(50)
                 ]
             )
             
-            docs = _safe_get(response, 'documents', [])
+            docs = _safe_get(response, 'rows', [])
             # Pick max 10 to avoid scraping too intensely in background
             empty_docs = [d for d in docs if not _safe_get(d, 'image_url') and not _safe_get(d, 'image')][:10]
             
@@ -787,10 +783,9 @@ async def background_image_enricher_job():
             for original, new_art in zip(articles_to_enrich, enriched):
                 if new_art.image_url and new_art.image_url.startswith("http"):
                     try:
-                        await appwrite_db.tablesDB.update_row(
-                            database_id=settings.APPWRITE_DATABASE_ID,
-                            collection_id=collection_id,
-                            document_id=new_art.id,
+                        await appwrite_db.update_row(
+                            table_id=collection_id,
+                            row_id=new_art.id,
                             data={'image_url': new_art.image_url, 'image': new_art.image_url}
                         )
                         total_enriched += 1

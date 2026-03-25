@@ -7,33 +7,39 @@ class Article(BaseModel):
     """News article model"""
     model_config = ConfigDict(populate_by_name=True)
 
-    title: str
-    id: Optional[str] = Field(None, alias="$id") # Appwrite ID
+    # --- CRITICAL FIX: All fields are Optional with safe defaults ---
+    # Previously, 'title: str' and 'published_at: datetime' were strict.
+    # A single null value from Appwrite would crash the ENTIRE request with
+    # a 500, returning zero articles. Now the backend is forgiving.
+    title: Optional[str] = "Untitled Article"
+    id: Optional[str] = Field(None, alias="$id")  # Appwrite ID
     description: Optional[str] = ""
-    url: Optional[str] = None # Relaxed validation for compatibility
-    # Direct mapping to DB fields (snake_case)
+    url: Optional[str] = "#"
     image_url: Optional[str] = ""
-    published_at: datetime
+    published_at: Optional[datetime] = None
     source: Optional[str] = ""
     category: Optional[str] = ""
-    audio_url: Optional[str] = None # URL to audio summary
-    text_summary: Optional[str] = None # Generated text summary
-    
+    audio_url: Optional[str] = None
+    text_summary: Optional[str] = None
+    url_hash: Optional[str] = None
+    author: Optional[str] = None
+
     # Engagement Stats (Side-loaded)
     likes: int = 0
-    dislikes: int = Field(default=0, validation_alias="dislike") # Alias for DB 'dislike'
+    dislikes: int = Field(default=0, validation_alias="dislike")  # Alias for DB 'dislike'
     views: int = 0
-    
+
     @field_validator('published_at', mode='before')
     @classmethod
     def parse_datetime(cls, v):
         """Parse datetime from various formats including RFC 2822 (RSS feeds)"""
+        if v is None:
+            return None
         if isinstance(v, datetime):
             return v
         if isinstance(v, str):
             try:
                 # Try RFC 2822 format (used by RSS feeds like Google News)
-                # Example: "Tue, 06 Jan 2026 19:14:27 GMT"
                 return parsedate_to_datetime(v)
             except:
                 try:
@@ -45,8 +51,8 @@ class Article(BaseModel):
                         from dateutil import parser
                         return parser.parse(v)
                     except:
-                        # Last resort: return current time
-                        return datetime.now()
+                        # Last resort: return None (no crash)
+                        return None
         return v
 
 class NewsResponse(BaseModel):

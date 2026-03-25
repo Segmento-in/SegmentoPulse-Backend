@@ -106,9 +106,9 @@ async def get_article_stats(article_id: str, category: Optional[str] = None):
         
         return {
             "article_id": doc_id,
-            "likes": doc.get('likes', 0),
-            "dislikes": doc.get('dislikes') or doc.get('dislike', 0),
-            "views": doc.get('views', 0),
+            "likes": _safe_get(doc, 'likes', 0),
+            "dislikes": _safe_get(doc, 'dislikes') or _safe_get(doc, 'dislike', 0),
+            "views": _safe_get(doc, 'views', 0),
             "success": True
         }
 
@@ -190,7 +190,7 @@ async def like_article(article_id: str, request: EngagementRequest = None):
                 raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
 
         # 3. Increment
-        current_likes = doc.get('likes', 0)
+        current_likes = _safe_get(doc, 'likes', 0)
         if current_likes is None: current_likes = 0
             
         new_likes = current_likes + 1
@@ -206,7 +206,7 @@ async def like_article(article_id: str, request: EngagementRequest = None):
         
         return {
             "article_id": doc_id,
-            "likes": updated_doc['likes'],
+            "likes": _safe_get(updated_doc, 'likes'),
             "success": True
         }
         
@@ -272,7 +272,7 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
             else:
                 raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
         
-        current_dislikes = doc.get('dislikes') or doc.get('dislike', 0)
+        current_dislikes = _safe_get(doc, 'dislikes') or _safe_get(doc, 'dislike', 0)
         if current_dislikes is None: current_dislikes = 0
             
         new_dislikes = current_dislikes + 1
@@ -288,9 +288,9 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
         
         # Return result (normalize key)
         # Return result
-        final_dislikes = updated_doc.get('dislike') or updated_doc.get('dislikes', 0)
+        final_dislikes = _safe_get(updated_doc, 'dislike') or _safe_get(updated_doc, 'dislikes', 0)
         
-        logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {updated_doc['dislike']})")
+        logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {final_dislikes})")
         
         return {
             "article_id": doc_id,
@@ -361,7 +361,7 @@ async def track_view(article_id: str, request: EngagementRequest = None):
             else:
                 raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
         
-        current_views = doc.get('views', 0)
+        current_views = _safe_get(doc, 'views', 0)
         if current_views is None: current_views = 0
             
         new_views = current_views + 1
@@ -374,11 +374,11 @@ async def track_view(article_id: str, request: EngagementRequest = None):
         )
         
         if new_views % 10 == 0:
-            logger.info(f"👁️  Article {doc_id[:8]}... reached {updated_doc['views']} views")
+            logger.info(f"👁️  Article {doc_id[:8]}... reached {new_views} views")
         
         return {
             "article_id": doc_id,
-            "views": updated_doc['views'],
+            "views": new_views,
             "success": True
         }
         
@@ -436,9 +436,9 @@ async def get_trending_articles(
         # Calculate engagement score (views + likes * 5 - dislikes * 3)
         # Likes are weighted higher, dislikes have negative impact
         for article in articles:
-            views = article.get('views', 0)
-            likes = article.get('likes', 0)
-            dislikes = article.get('dislikes') or article.get('dislike', 0)
+            views = _safe_get(article, 'views', 0)
+            likes = _safe_get(article, 'likes', 0)
+            dislikes = _safe_get(article, 'dislikes') or _safe_get(article, 'dislike', 0)
             article['engagement_score'] = views + (likes * 5) - (dislikes * 3)
         
         # Sort by engagement score

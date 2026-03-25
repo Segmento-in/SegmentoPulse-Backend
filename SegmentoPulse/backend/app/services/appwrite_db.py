@@ -3,17 +3,15 @@ Appwrite Database Service - Phase 2
 Provides persistent storage for news articles with fast querying capability.
 """
 
-# Suppress Appwrite SDK v4.1.0 deprecation warnings
-# NOTE: list_documents() is deprecated but new API (tablesDB.list_rows) requires SDK v6+
-# We're using v4.1.0 for stability, suppress warnings until we upgrade
-import warnings
+# Appwrite SDK v16.0.0 Integration
+# Migrated from legacy 'Databases' to modern 'TablesDB' service
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='appwrite')
-warnings.filterwarnings('ignore', message='Call to deprecated function') # Catch-all for Appwrite logs
 
 try:
     from appwrite.client import Client
     from appwrite.services.databases import Databases
+    from appwrite.services.tables_db import TablesDB
     from appwrite.services.storage import Storage
     from appwrite.query import Query
     from appwrite.exception import AppwriteException
@@ -22,7 +20,7 @@ except ImportError:
     APPWRITE_AVAILABLE = False
     print("Appwrite SDK not available - database features disabled")
 
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import hashlib
 import asyncio # For parallel writes
@@ -42,35 +40,67 @@ def _safe_get(data, key, default=None):
     Robust attribute/key getter for Appwrite SDK responses.
     Handles:
     1. Plain dictionaries (standard .get)
-    2. SDK Objects (getattr access)
-    3. Automatic aliasing of '$id' <-> 'id'
-    4. Data is None/Empty safety
+    2. SDK Objects with a .data dict (Appwrite v16 Row objects)
+    3. SDK Objects (getattr access for legacy DocumentList, RowList)
+    4. Automatic aliasing of '$id' <-> 'id'
+    5. Support for both .documents (Databases) and .rows (TablesDB)
+    6. Data is None/Empty safety
+
+    CRITICAL (Appwrite SDK v16):
+        Row objects store all user-defined fields inside `row.data` (a plain dict).
+        Top-level Row attributes are only metadata: id, sequence, tableid, etc.
+        This function checks `row.data` first before falling back to getattr.
     """
     if data is None:
         return default
-    
-    # CASE 1: Data is a dictionary
+
+    # CASE 1: Data is a plain dictionary
     if isinstance(data, dict):
         # Specific fix for $id to id mapping for dicts
         if key == 'id' and 'id' not in data and '$id' in data:
             return data.get('$id')
         if key == '$id' and '$id' not in data and 'id' in data:
             return data.get('id')
+
+        # Handle list structure mapping for dicts
+        if key == 'documents' and 'documents' not in data and 'rows' in data:
+            return data.get('rows')
+        if key == 'rows' and 'rows' not in data and 'documents' in data:
+            return data.get('documents')
+
         return data.get(key, default)
-    
-    # CASE 2: Data is an object (SDK Response object)
-    # Important: SDK v14 DocumentList has .documents and .total
-    # Article objects have .id or .$id
+
+    # CASE 2: SDK Row object (Appwrite v16) — data lives in .data dict
+    # This is the critical path for article field extraction.
+    row_data = getattr(data, 'data', None)
+    if isinstance(row_data, dict):
+        # Handle $id: Row objects use 'id' not '$id'
+        if key == '$id':
+            val = row_data.get('$id') or getattr(data, 'id', None)
+            return val if val is not None else default
+        if key in row_data:
+            return row_data[key]
+        # Also check top-level attributes (id, sequence, createdat, etc.)
+        top_val = getattr(data, key, None)
+        return top_val if top_val is not None else default
+
+    # CASE 3: Legacy SDK Objects (DocumentList, RowList for list responses)
+    # Important: SDK v14+ DocumentList has .documents, TablesDB RowList has .rows
     val = getattr(data, key, None)
-    
-    # Mirror mapping for objects
+
+    # Cross-compatibility for list attributes
     if val is None:
-        if key == 'id':
+        if key == 'documents':
+            val = getattr(data, 'rows', None)
+        elif key == 'rows':
+            val = getattr(data, 'documents', None)
+        elif key == 'id':
             val = getattr(data, '$id', None)
         elif key == '$id':
             val = getattr(data, 'id', None)
-            
+
     return val if val is not None else default
+
 
 
 class TablesDBWrapper:
@@ -83,23 +113,23 @@ class TablesDBWrapper:
     
     async def create_row(self, *args, **kwargs):
         # Appwrite SDK natively maps to `create_document`
-        return await asyncio.to_thread(self.db.create_document, *args, **kwargs)
+        return await asyncio.to_thread(self.db.create_row, *args, **kwargs)
         
     async def get_row(self, *args, **kwargs):
         # Appwrite SDK natively maps to `get_document`
-        return await asyncio.to_thread(self.db.get_document, *args, **kwargs)
+        return await asyncio.to_thread(self.db.get_row, *args, **kwargs)
     
     async def list_rows(self, *args, **kwargs):
         # Appwrite SDK natively maps to `list_documents`
-        return await asyncio.to_thread(self.db.list_documents, *args, **kwargs)
+        return await asyncio.to_thread(self.db.list_rows, *args, **kwargs)
 
     async def delete_row(self, *args, **kwargs):
         # Appwrite SDK natively maps to `delete_document`
-        return await asyncio.to_thread(self.db.delete_document, *args, **kwargs)
+        return await asyncio.to_thread(self.db.delete_row, *args, **kwargs)
 
     async def update_row(self, *args, **kwargs):
         # Appwrite SDK natively maps to `update_document`
-        return await asyncio.to_thread(self.db.update_document, *args, **kwargs)
+        return await asyncio.to_thread(self.db.update_row, *args, **kwargs)
 
 
 class AppwriteDatabase:
@@ -145,38 +175,21 @@ class AppwriteDatabase:
             self.client.set_project(settings.APPWRITE_PROJECT_ID)
             self.client.set_key(settings.APPWRITE_API_KEY)
             
-            # Initialize databases service
+            # Initialize databases service (Legacy support)
             self.databases = Databases(self.client)
+            
+            # Initialize TablesDB service (Modern API)
+            self.tablesDB = TablesDB(self.client)
             
             # Initialize storage service
             self.storage = Storage(self.client)
             
+            # Set initialization flag
             self.initialized = True
-            print("")
-            self.initialized = True
-            print("")
-            print("-" * 80)
-            print("[Appwrite] Database initialized successfully!")
-            print(f"Database ID: {settings.APPWRITE_DATABASE_ID}")
-            print(f"Collection ID: {settings.APPWRITE_COLLECTION_ID}")
-            print("-" * 80)
-            print("-" * 80)
-            print("")
-            print("")
-            
-            self.tablesDB = TablesDBWrapper(self.databases)
+            logger.info("[Appwrite] Connections initialized successfully")
             
         except Exception as e:
-            print("")
-        except Exception as e:
-            print("")
-            print("!" * 80)
-            print("[Appwrite] Initialization FAILED!")
-            print(f"[ERROR] Error: {e}")
-            print("[INFO] Please check your Appwrite credentials in .env file")
-            print("!" * 80)
-            print("")
-            print("")
+            logger.error(f"[Appwrite] Initialization FAILED: {e}")
             self.initialized = False
             
     def get_collection_id(self, category: str) -> str:
@@ -273,46 +286,47 @@ class AppwriteDatabase:
             if category != 'research':
                 queries.insert(0, Query.equal('category', category))
             
-            response = await self.tablesDB.list_rows(
+            response = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=target_collection_id,
+                table_id=target_collection_id,
                 queries=queries
             )
             
-            print(f"[DEBUG] Appwrite Raw Response: Total={_safe_get(response, 'total')}, Docs={len(_safe_get(response, 'documents', []))}")
+            print(f"[DEBUG] Appwrite Raw Response: Total={_safe_get(response, 'total')}, Items={len(_safe_get(response, 'rows', []))}")
             
             # Convert Appwrite documents to Article dictionaries
             articles = []
-            for doc in _safe_get(response, 'documents', []):
+            for doc in _safe_get(response, 'rows', []):
                 try:
                     # Smart Mapping for Research Papers
-                    description = doc.get('description', '')
-                    if not description and doc.get('summary'):
-                         description = doc.get('summary')
+                    description = _safe_get(doc, 'description', '')
+                    if not description and _safe_get(doc, 'summary'):
+                         description = _safe_get(doc, 'summary')
                          
-                    url = doc.get('url', '')
-                    if not url and doc.get('pdf_url'):
-                        url = doc.get('pdf_url')
+                    url = _safe_get(doc, 'url', '')
+                    if not url and _safe_get(doc, 'pdf_url'):
+                        url = _safe_get(doc, 'pdf_url')
                         
                     article = {
-                        '$id': doc.get('$id'), # Ensure $id is passed!
-                        'title': doc.get('title'),
+                        '$id': _safe_get(doc, '$id'), # Ensure $id is passed!
+                        'title': _safe_get(doc, 'title'),
                         'description': description,
                         'url': url,
-                        'image_url': doc.get('image_url', ''),
-                        'publishedAt': doc.get('published_at'),
-                        'published_at': doc.get('published_at'), # Standard schema field
-                        'source': doc.get('source', ''),
-                        'category': doc.get('category'),
-                        'likes': doc.get('likes', 0),
-                        'dislikes': doc.get('dislike', 0),
-                        'views': doc.get('views', 0),
-                        'author': doc.get('authors') # Map authors to author (singular for compat)
-                        # 'authors': doc.get('authors') # Keep plural if needed
+                        'image_url': _safe_get(doc, 'image_url', ''),
+                        'publishedAt': _safe_get(doc, 'published_at'),
+                        'published_at': _safe_get(doc, 'published_at'), # Standard schema field
+                        'source': _safe_get(doc, 'source', ''),
+                        'category': _safe_get(doc, 'category'),
+                        'likes': _safe_get(doc, 'likes', 0),
+                        'dislikes': _safe_get(doc, 'dislike', 0),
+                        'views': _safe_get(doc, 'views', 0),
+                        'author': _safe_get(doc, 'authors') # Map authors to author (singular for compat)
+                        # 'authors': _safe_get(doc, 'authors') # Keep plural if needed
                     }
                     articles.append(article)
                 except Exception as e:
-                    print(f"Error parsing Appwrite document: {e}")
+                    logger.error(f"Error parsing Appwrite document: {e}")
                     continue
             
             if articles:
@@ -365,29 +379,30 @@ class AppwriteDatabase:
 
             logger.info(f"🚀 [QUERY] Executing query on Collection: {target_collection_id}")
             
-            response = await self.tablesDB.list_rows(
+            response = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=target_collection_id,
+                table_id=target_collection_id,
                 queries=queries
             )
             
             # Convert to article dictionaries
             articles = []
-            for doc in _safe_get(response, 'documents', []):
+            for doc in _safe_get(response, 'rows', []):
                 try:
                     article = {
-                        '$id': doc.get('$id'),
-                        'title': doc.get('title'),
-                        'description': doc.get('description') or doc.get('summary', ''),
-                        'url': doc.get('url'),
-                        'image_url': doc.get('image_url', ''),
-                        'publishedAt': doc.get('published_at'),
-                        'published_at': doc.get('published_at'),
-                        'source': doc.get('source', ''),
-                        'category': doc.get('category'),
-                        'likes': doc.get('likes', 0),
-                        'dislikes': doc.get('dislike', 0),
-                        'views': doc.get('views', 0)
+                        '$id': _safe_get(doc, '$id'),
+                        'title': _safe_get(doc, 'title'),
+                        'description': _safe_get(doc, 'description') or _safe_get(doc, 'summary', ''),
+                        'url': _safe_get(doc, 'url'),
+                        'image_url': _safe_get(doc, 'image_url', ''),
+                        'publishedAt': _safe_get(doc, 'published_at'),
+                        'published_at': _safe_get(doc, 'published_at'),
+                        'source': _safe_get(doc, 'source', ''),
+                        'category': _safe_get(doc, 'category'),
+                        'likes': _safe_get(doc, 'likes', 0),
+                        'dislikes': _safe_get(doc, 'dislike', 0),
+                        'views': _safe_get(doc, 'views', 0)
                     }
                     articles.append(article)
                 except Exception as e:
@@ -503,11 +518,12 @@ class AppwriteDatabase:
                     # NOTE: Cloud collection DOES accept 'published_at' (snake_case)
                     # Only the 'image' field uses legacy naming
 
-                # Try to create document
-                await self.tablesDB.create_row(
+                # Try to create row
+                await asyncio.to_thread(
+                    self.tablesDB.create_row,
                     database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=target_collection_id,
-                    document_id=doc_id, # Truncated ID
+                    table_id=target_collection_id,
+                    row_id=doc_id, # Modern terminology
                     data=document_data
                 )
                 
@@ -549,7 +565,7 @@ class AppwriteDatabase:
         
         # Count results
         saved_count = 0
-        saved_documents = []
+        saved_rows = []
         duplicate_count = 0
         error_count = 0
         
@@ -561,7 +577,7 @@ class AppwriteDatabase:
             status, data = result
             if status == 'success':
                 saved_count += 1
-                saved_documents.append(data)
+                saved_rows.append(data)
             elif status == 'duplicate':
                 duplicate_count += 1
             else:  # error
@@ -573,7 +589,7 @@ class AppwriteDatabase:
                 TAG_DB, saved_count, duplicate_count, error_count
             )
         
-        return saved_count, duplicate_count, error_count, saved_documents
+        return saved_count, duplicate_count, error_count, saved_rows
     
     async def delete_old_articles(self, days: int = 30) -> int:
         """
@@ -592,22 +608,24 @@ class AppwriteDatabase:
             cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
             
             # Query old articles
-            response = await self.tablesDB.list_rows(
+            response = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_COLLECTION_ID,
+                table_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[
                     Query.less_than('fetched_at', cutoff_date),
-                    Query.limit(500)  # Increased from 100 to 500 for better throughput
+                    Query.limit(500)
                 ]
             )
             
             deleted_count = 0
-            for doc in _safe_get(response, 'documents', []):
+            for doc in _safe_get(response, 'rows', []):
                 try:
-                    await self.tablesDB.delete_row(
+                    await asyncio.to_thread(
+                        self.tablesDB.delete_row,
                         database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=settings.APPWRITE_COLLECTION_ID,
-                        document_id=doc['$id']
+                        table_id=settings.APPWRITE_COLLECTION_ID,
+                        row_id=doc['$id']
                     )
                     deleted_count += 1
                 except Exception as e:
@@ -624,6 +642,57 @@ class AppwriteDatabase:
             print(f"Error deleting old articles: {e}")
             return 0
     
+    # ------------------------------------------------------------------
+    # Generic Row Operations (Phase 16 Migration)
+    # ------------------------------------------------------------------
+    async def list_rows(self, table_id: str, queries: List[Any] = None) -> Dict:
+        """Generic list_rows wrapper for any table"""
+        if not self.initialized:
+            return {"total": 0, "rows": []}
+        try:
+            return await asyncio.to_thread(
+                self.tablesDB.list_rows,
+                database_id=settings.APPWRITE_DATABASE_ID,
+                table_id=table_id,
+                queries=queries or []
+            )
+        except Exception as e:
+            logger.error(f"[Appwrite] list_rows error on {table_id}: {e}")
+            return {"total": 0, "rows": []}
+
+    async def delete_row(self, table_id: str, row_id: str) -> bool:
+        """Generic delete_row wrapper for any table"""
+        if not self.initialized:
+            return False
+        try:
+            await asyncio.to_thread(
+                self.tablesDB.delete_row,
+                database_id=settings.APPWRITE_DATABASE_ID,
+                table_id=table_id,
+                row_id=row_id
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] delete_row error on {table_id}/{row_id}: {e}")
+            return False
+
+    async def update_row(self, table_id: str, row_id: str, data: Dict) -> bool:
+        """Generic update_row wrapper for any table"""
+        if not self.initialized:
+            return False
+        try:
+            await asyncio.to_thread(
+                self.tablesDB.update_row,
+                database_id=settings.APPWRITE_DATABASE_ID,
+                table_id=table_id,
+                row_id=row_id,
+                data=data
+            )
+            return True
+        except Exception as e:
+            logger.error(f"❌ [Appwrite] update_row error on {table_id}/{row_id}: {e}")
+            return False
+
     # ------------------------------------------------------------------
     # SUBSCRIBER MANAGEMENT (Migration Phase 2)
     # ------------------------------------------------------------------
@@ -657,10 +726,11 @@ class AppwriteDatabase:
             # Using MD5 of email ensures idempotent writes (same email = same ID)
             doc_id = hashlib.md5(email.lower().encode()).hexdigest()
 
-            await self.tablesDB.create_row(
+            await asyncio.to_thread(
+                self.tablesDB.create_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=doc_id,
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                row_id=doc_id,
                 data=data
             )
             logger.info(f"✅ [Appwrite] Subscriber created: {email}")
@@ -685,14 +755,15 @@ class AppwriteDatabase:
             return None
             
         try:
-            documents = await self.tablesDB.list_rows(
+            rows = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 queries=[Query.equal("email", email)]
             )
             
-            if _safe_get(documents, 'total', 0) > 0:
-                return _safe_get(documents, 'documents', [])[0]
+            if _safe_get(rows, 'total', 0) > 0:
+                return _safe_get(rows, 'rows', [])[0]
             return None
             
         except Exception as e:
@@ -720,11 +791,12 @@ class AppwriteDatabase:
             if "Weekly" in preferences: data["sub_weekly"] = preferences["Weekly"]
             if "Monthly" in preferences: data["sub_monthly"] = preferences["Monthly"]
             
-            # Note: tablesDB wrapper now has update_row
-            await self.tablesDB.update_row(
+            # Use async bridge for update_row
+            await asyncio.to_thread(
+                self.tablesDB.update_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=doc_id,
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                row_id=doc_id,
                 data=data
             )
             logger.info(f"✅ [Appwrite] Subscriber updated: {email}")
@@ -737,14 +809,15 @@ class AppwriteDatabase:
     async def get_subscriber_by_token(self, token: str) -> Optional[Dict]:
         """Get subscriber by unsubscribe token"""
         try:
-            documents = await self.tablesDB.list_rows(
+            rows = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 queries=[Query.equal("token", token)]
             )
             
-            if _safe_get(documents, 'total', 0) > 0:
-                return _safe_get(documents, 'documents', [])[0]
+            if _safe_get(rows, 'total', 0) > 0:
+                return _safe_get(rows, 'rows', [])[0]
             return None
             
         except Exception as e:
@@ -761,10 +834,11 @@ class AppwriteDatabase:
             if text_summary:
                 data['text_summary'] = text_summary
                 
-            await self.tablesDB.update_row(
+            await asyncio.to_thread(
+                self.tablesDB.update_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=collection_id,
-                document_id=document_id,
+                table_id=collection_id,
+                row_id=document_id,
                 data=data
             )
             return True
@@ -800,10 +874,11 @@ class AppwriteDatabase:
                 
             data = {field: is_active}
             
-            await self.tablesDB.update_row(
+            await asyncio.to_thread(
+                self.tablesDB.update_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=_safe_get(subscriber, '$id'),
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                row_id=_safe_get(subscriber, '$id'),
                 data=data
             )
             logger.info(f"✅ [Appwrite] Updated {preference} for {email} to {is_active}")
@@ -827,10 +902,11 @@ class AppwriteDatabase:
             
             data = {"isActive": subscribed}
             
-            await self.tablesDB.update_row(
+            await asyncio.to_thread(
+                self.tablesDB.update_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=_safe_get(subscriber, '$id'),
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                row_id=_safe_get(subscriber, '$id'),
                 data=data
             )
             logger.info(f"✅ [Appwrite] Global status for {email} set to {subscribed}")
@@ -858,10 +934,11 @@ class AppwriteDatabase:
             # Store in UTC ISO format
             utc_now = datetime.now(pytz.UTC).isoformat()
             
-            await self.tablesDB.update_row(
+            await asyncio.to_thread(
+                self.tablesDB.update_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
-                document_id=_safe_get(subscriber, '$id'),
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                row_id=_safe_get(subscriber, '$id'),
                 data={'lastSentAt': utc_now}
             )
             # logger.debug(f"✅ [Appwrite] Updated lastSentAt for {email}")
@@ -902,9 +979,10 @@ class AppwriteDatabase:
             # 1. Must be globally active (isActive=true)
             # 2. Must be subscribed to specific preference (sub_X=true)
             
-            documents = await self.tablesDB.list_rows(
+            rows = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
                 queries=[
                     Query.equal("isActive", True),
                     Query.equal(field, True),
@@ -912,7 +990,7 @@ class AppwriteDatabase:
                 ]
             )
             
-            subs = _safe_get(documents, 'documents', [])
+            subs = _safe_get(rows, 'rows', [])
             logger.info(f"✅ [Appwrite] Found {len(subs)} subscribers for {preference}")
             return subs
             
@@ -920,26 +998,24 @@ class AppwriteDatabase:
             logger.error(f"❌ [Appwrite] Error getting subscribers by preference: {e}")
             return []
 
-    async def update_article_audio(self, collection_id: str, document_id: str, audio_url: str, text_summary: Optional[str] = None) -> bool:
-        """Update article with audio URL and optional text summary"""
+    async def get_all_subscribers(self) -> List[Dict]:
+        """
+        Get all subscribers (Source of Truth)
+        Used by admin analytics.
+        """
         if not self.initialized:
-            return False
-            
+            return []
         try:
-            data = {'audio_url': audio_url}
-            if text_summary:
-                data['text_summary'] = text_summary
-                
-            await self.tablesDB.update_row(
+            rows = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=collection_id,
-                document_id=document_id,
-                data=data
+                table_id=settings.APPWRITE_SUBSCRIBERS_COLLECTION_ID,
+                queries=[Query.limit(5000)] # Appwrite limit
             )
-            return True
+            return _safe_get(rows, 'rows', [])
         except Exception as e:
-            logger.error(f"❌ [Appwrite] Error updating article audio: {e}")
-            return False
+            logger.error(f"[Appwrite] Error getting all subscribers: {e}")
+            return []
 
     async def get_database_stats(self) -> Dict:
         """
@@ -953,9 +1029,10 @@ class AppwriteDatabase:
         
         try:
             # Get total count
-            total_response = self.tablesDB.list_rows(
+            total_response = await asyncio.to_thread(
+                self.tablesDB.list_rows,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=settings.APPWRITE_COLLECTION_ID,
+                table_id=settings.APPWRITE_COLLECTION_ID,
                 queries=[Query.limit(1)]
             )
             total_articles = _safe_get(total_response, 'total', 0)
@@ -970,11 +1047,12 @@ class AppwriteDatabase:
             
             articles_by_category = {}
             for category in categories:
-                response = self.tablesDB.list_rows(
+                response = await asyncio.to_thread(
+                    self.tablesDB.list_rows,
                     database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=settings.APPWRITE_COLLECTION_ID,
+                    table_id=settings.APPWRITE_COLLECTION_ID,
                     queries=[
-                        Query.equal('category', category),  # SDK v4.x uses string value
+                        Query.equal('category', category),
                         Query.limit(1)
                     ]
                 )
@@ -984,7 +1062,7 @@ class AppwriteDatabase:
                 "total_articles": total_articles,
                 "articles_by_category": articles_by_category,
                 "database_id": settings.APPWRITE_DATABASE_ID,
-                "collection_id": settings.APPWRITE_COLLECTION_ID,
+                "table_id": settings.APPWRITE_COLLECTION_ID,
                 "initialized": self.initialized
             }
             
@@ -1001,4 +1079,12 @@ def get_appwrite_db() -> AppwriteDatabase:
     global _appwrite_db
     if _appwrite_db is None:
         _appwrite_db = AppwriteDatabase()
+    
+    # Ensure it's initialized if configuration is present
+    if not _appwrite_db.initialized and APPWRITE_AVAILABLE:
+        from app.config import settings
+        if settings.APPWRITE_PROJECT_ID:
+            # Note: _initialize is sync, so we can call it here
+            _appwrite_db._initialize()
+            
     return _appwrite_db

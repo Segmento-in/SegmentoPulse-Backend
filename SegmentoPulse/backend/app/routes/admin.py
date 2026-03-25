@@ -452,18 +452,18 @@ async def get_subscriber_analytics():
         total_count = len(all_subscribers)
         
         for sub in all_subscribers:
-            if sub.get('isActive', True):
+            if _safe_get(sub, 'isActive', True):
                 active_count += 1
                 # Count each preference subscription
-                if sub.get('sub_morning', False):
+                if _safe_get(sub, 'sub_morning', False):
                     preference_counts['Morning'] += 1
-                if sub.get('sub_afternoon', False):
+                if _safe_get(sub, 'sub_afternoon', False):
                     preference_counts['Afternoon'] += 1
-                if sub.get('sub_evening', False):
+                if _safe_get(sub, 'sub_evening', False):
                     preference_counts['Evening'] += 1
-                if sub.get('sub_weekly', False):
+                if _safe_get(sub, 'sub_weekly', False):
                     preference_counts['Weekly'] += 1
-                if sub.get('sub_monthly', False):
+                if _safe_get(sub, 'sub_monthly', False):
                     preference_counts['Monthly'] += 1
         
         return {
