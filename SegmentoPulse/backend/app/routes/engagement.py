@@ -6,6 +6,7 @@ Handles article likes, views tracking, and trending articles
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from pydantic import BaseModel
+import asyncio
 from app.services.appwrite_db import get_appwrite_db, _safe_get
 from app.config import settings
 from app.utils.id_generator import generate_article_id
@@ -83,10 +84,11 @@ async def get_article_stats(article_id: str, category: Optional[str] = None):
         
         for collection_id in target_collection_ids:
             try:
-                doc = await appwrite_db.tablesDB.get_row(
+                doc = await asyncio.to_thread(
+                    appwrite_db.tablesDB.get_row,
                     database_id=settings.APPWRITE_DATABASE_ID,
-                    collection_id=collection_id,
-                    document_id=doc_id
+                    table_id=collection_id,
+                    row_id=doc_id
                 )
                 if doc:
                     found_collection = collection_id
@@ -145,49 +147,15 @@ async def like_article(article_id: str, request: EngagementRequest = None):
         
         # 1. Try to get document from the TARGETED collection
         try:
-            doc = await appwrite_db.tablesDB.get_row(
+            doc = await asyncio.to_thread(
+                appwrite_db.tablesDB.get_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=target_collection_id,
-                document_id=doc_id
+                table_id=target_collection_id,
+                row_id=doc_id
             )
         except Exception:
-            # 2. Document NOT FOUND -> Create it if we have URL
-            if request and request.url:
-                logger.info(f"🆕 Article {doc_id} not found in {target_collection_id}. Creating from metadata...")
-                try:
-                    new_doc = {
-                        "url": request.url,
-                        "title": request.title or "Unknown Article",
-                        "image_url": request.image or "",
-                        "source": "pulse-engagement", 
-                        "published_at": datetime.now().isoformat(),
-                        "fetched_at": datetime.now().isoformat(),
-                        "likes": 0,
-                        "dislike": 0,
-                        "views": 0,
-                        "category": request.category or "wildcard"
-                    }
-                    
-                    logger.info(f"📝 Creating new article with data: {new_doc}")
-                    
-                    await appwrite_db.tablesDB.create_row(
-                        database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=target_collection_id,
-                        document_id=doc_id,
-                        data=new_doc
-                    )
-                    # Fetch the newly created doc
-                    doc = await appwrite_db.tablesDB.get_row(
-                        database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=target_collection_id,
-                        document_id=doc_id
-                    )
-                except Exception as create_err:
-                    logger.error(f"Failed to create missing article: {create_err}")
-                    raise HTTPException(status_code=404, detail="Article not found and creation failed")
-            else:
-                # If we don't have metadata to create it, and it's not found, it's a 404
-                raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
+            # Document NOT FOUND -> Fail with 404 (do not create — articles are seeded by ingestion)
+            raise HTTPException(status_code=404, detail=f"Article {doc_id} not found in collection {target_collection_id}")
 
         # 3. Increment
         current_likes = _safe_get(doc, 'likes', 0)
@@ -195,18 +163,19 @@ async def like_article(article_id: str, request: EngagementRequest = None):
             
         new_likes = current_likes + 1
         
-        updated_doc = await appwrite_db.tablesDB.update_row(
+        updated_doc = await asyncio.to_thread(
+            appwrite_db.tablesDB.update_row,
             database_id=settings.APPWRITE_DATABASE_ID,
-            collection_id=target_collection_id,
-            document_id=doc_id,
+            table_id=target_collection_id,
+            row_id=doc_id,
             data={"likes": new_likes}
         )
         
-        logger.info(f"❤️  Article {doc_id[:8]}... liked (total: {updated_doc['likes']})")
+        logger.info(f"Article {doc_id[:8]}... liked (total: {new_likes})")
         
         return {
             "article_id": doc_id,
-            "likes": _safe_get(updated_doc, 'likes'),
+            "likes": _safe_get(updated_doc, 'likes', new_likes),
             "success": True
         }
         
@@ -235,42 +204,14 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
             target_collection_id = appwrite_db.get_collection_id(request.category)
         
         try:
-            doc = await appwrite_db.tablesDB.get_row(
+            doc = await asyncio.to_thread(
+                appwrite_db.tablesDB.get_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=target_collection_id,
-                document_id=doc_id
+                table_id=target_collection_id,
+                row_id=doc_id
             )
         except Exception:
-            if request and request.url:
-                logger.info(f"🆕 Article {doc_id} not found in {target_collection_id}. Creating from metadata...")
-                try:
-                    new_doc = {
-                        "url": request.url,
-                        "title": request.title or "Unknown Article",
-                        "image_url": request.image or "",
-                        "source": "pulse-engagement",
-                        "published_at": datetime.now().isoformat(),
-                        "fetched_at": datetime.now().isoformat(),
-                        "likes": 0,
-                        "dislike": 0,
-                        "views": 0,
-                        "category": request.category or "wildcard"
-                    }
-                    await appwrite_db.tablesDB.create_row(
-                        database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=target_collection_id,
-                        document_id=doc_id,
-                        data=new_doc
-                    )
-                    doc = await appwrite_db.tablesDB.get_row(
-                        database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=target_collection_id,
-                        document_id=doc_id
-                    )
-                except Exception as create_err:
-                    raise HTTPException(status_code=404, detail="Article not found and creation failed")
-            else:
-                raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
+            raise HTTPException(status_code=404, detail=f"Article {doc_id} not found in collection {target_collection_id}")
         
         current_dislikes = _safe_get(doc, 'dislikes') or _safe_get(doc, 'dislike', 0)
         if current_dislikes is None: current_dislikes = 0
@@ -279,18 +220,17 @@ async def dislike_article(article_id: str, request: EngagementRequest = None):
         
         update_data = {"dislike": new_dislikes}
 
-        updated_doc = await appwrite_db.tablesDB.update_row(
+        updated_doc = await asyncio.to_thread(
+            appwrite_db.tablesDB.update_row,
             database_id=settings.APPWRITE_DATABASE_ID,
-            collection_id=target_collection_id,
-            document_id=doc_id,
+            table_id=target_collection_id,
+            row_id=doc_id,
             data=update_data
         )
         
-        # Return result (normalize key)
-        # Return result
-        final_dislikes = _safe_get(updated_doc, 'dislike') or _safe_get(updated_doc, 'dislikes', 0)
+        final_dislikes = _safe_get(updated_doc, 'dislike', new_dislikes)
         
-        logger.info(f"👎 Article {doc_id[:8]}... disliked (total: {final_dislikes})")
+        logger.info(f"Article {doc_id[:8]}... disliked (total: {final_dislikes})")
         
         return {
             "article_id": doc_id,
@@ -323,53 +263,25 @@ async def track_view(article_id: str, request: EngagementRequest = None):
             target_collection_id = appwrite_db.get_collection_id(request.category)
         
         try:
-            doc = await appwrite_db.tablesDB.get_row(
+            doc = await asyncio.to_thread(
+                appwrite_db.tablesDB.get_row,
                 database_id=settings.APPWRITE_DATABASE_ID,
-                collection_id=target_collection_id,
-                document_id=doc_id
+                table_id=target_collection_id,
+                row_id=doc_id
             )
         except Exception:
-            if request and request.url:
-                try:
-                    new_doc = {
-                        "url": request.url,
-                        "title": request.title or "Unknown Article",
-                        "image_url": request.image or "",
-                        "source": "pulse-engagement",
-                        "published_at": datetime.now().isoformat(),
-                        "fetched_at": datetime.now().isoformat(),
-                        "likes": 0,
-                        "dislike": 0,
-                        "views": 0,
-                        "category": request.category or "wildcard"
-                    }
-                    await appwrite_db.tablesDB.create_row(
-                        database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=target_collection_id,
-                        document_id=doc_id,
-                        data=new_doc
-                    )
-                    doc = await appwrite_db.tablesDB.get_row(
-                        database_id=settings.APPWRITE_DATABASE_ID,
-                        collection_id=target_collection_id,
-                        document_id=doc_id
-                    )
-                except Exception as create_err:
-                    # Fail silently for views if creation fails (maybe race condition)
-                    logger.warning(f"Failed to create article on view: {create_err}")
-                    raise HTTPException(status_code=404, detail="Article not found")
-            else:
-                raise HTTPException(status_code=404, detail=f"Article not found in {target_collection_id}")
+            raise HTTPException(status_code=404, detail=f"Article {doc_id} not found in collection {target_collection_id}")
         
         current_views = _safe_get(doc, 'views', 0)
         if current_views is None: current_views = 0
             
         new_views = current_views + 1
         
-        updated_doc = await appwrite_db.tablesDB.update_row(
+        updated_doc = await asyncio.to_thread(
+            appwrite_db.tablesDB.update_row,
             database_id=settings.APPWRITE_DATABASE_ID,
-            collection_id=target_collection_id,
-            document_id=doc_id,
+            table_id=target_collection_id,
+            row_id=doc_id,
             data={"views": new_views}
         )
         
